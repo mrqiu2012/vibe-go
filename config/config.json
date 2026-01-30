@@ -1,0 +1,30 @@
+{
+  "server": {
+    "port": 3005
+  },
+  "roots": [
+    "/Users/chaonanqiu/Desktop/code"
+  ],
+  "dangerousCommandDenylist": [
+    "sudo",
+    "su",
+    "rm",
+    "shutdown",
+    "reboot",
+    "kill",
+    "pkill",
+    "launchctl",
+    "chmod",
+    "chown",
+    "chgrp",
+    "dd",
+    "diskutil",
+    "mount",
+    "umount"
+  ],
+  "limits": {
+    "timeoutSec": 900,
+    "maxOutputKB": 1024,
+    "maxSessions": 4
+  }
+}

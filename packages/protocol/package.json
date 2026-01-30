@@ -1,0 +1,23 @@
+{
+  "name": "@web-ide/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "tsup src/index.ts --format esm --dts --watch --sourcemap",
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "lint": "echo \"(no lint)\""
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.3"
+  }
+}
