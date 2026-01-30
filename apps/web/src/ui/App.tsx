@@ -5,6 +5,7 @@ import { FitAddon } from "xterm-addon-fit";
 import hljs from "highlight.js";
 import { apiList, apiRead, apiRoots, apiWrite, type FsEntry } from "../api";
 import { TermClient, type TermServerMsg } from "../wsTerm";
+import { CursorChatPanel } from "./CursorChatPanel";
 
 type TreeNode = {
   path: string;
@@ -175,7 +176,7 @@ export function App() {
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
-  const [topHeight, setTopHeight] = useState(60); // Editor 高度百分比
+  const [topHeight, setTopHeight] = useState(60); // Terminal 高度百分比（用于交换 Editor/Terminal 高度）
   const [isDraggingVertical, setIsDraggingVertical] = useState(false);
 
   const [roots, setRoots] = useState<string[]>([]);
@@ -200,13 +201,23 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
-  const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor">("restricted");
-  const termModeRef = useRef<"restricted" | "codex" | "cursor">("restricted");
+  const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
+  const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("restricted");
+  const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("restricted");
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
-  const [quickPrompt, setQuickPrompt] = useState("");
-  const [cursorThreadId, setCursorThreadId] = useState<string>("");
-  const [showCursorDropdown, setShowCursorDropdown] = useState(false);
+  const cursorModeRef = useRef<"agent" | "plan" | "ask">("agent");
+  const [cursorCliMode, setCursorCliMode] = useState<"agent" | "plan" | "ask">("agent");
+  const cursorCliModeRef = useRef<"agent" | "plan" | "ask">("agent");
+  const termCwdRef = useRef<string>("");
+  const lastOpenKeyRef = useRef<string>("");
+  const cursorPromptNudgedRef = useRef(false);
   const termInitedRef = useRef(false);
+
+  const logTerm = (...args: any[]) => {
+    // Enable for debugging CLI-Agent
+    // eslint-disable-next-line no-console
+    console.log("[AppTerm]", ...args);
+  };
   const termResizeObsRef = useRef<ResizeObserver | null>(null);
   const termInputBufRef = useRef<string>("");
 
@@ -215,6 +226,14 @@ export function App() {
   useEffect(() => {
     termModeRef.current = termMode;
   }, [termMode]);
+
+  useEffect(() => {
+    cursorModeRef.current = cursorMode;
+  }, [cursorMode]);
+
+  useEffect(() => {
+    cursorCliModeRef.current = cursorCliMode;
+  }, [cursorCliMode]);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
@@ -256,8 +275,10 @@ export function App() {
       const rect = rightPanel.getBoundingClientRect();
       const offsetY = e.clientY - rect.top;
       const newHeightPercent = (offsetY / rect.height) * 100;
+      // newHeightPercent is the divider position from top (i.e. Editor height %)
+      // We store Terminal height %, so invert it.
       if (newHeightPercent >= 30 && newHeightPercent <= 80) {
-        setTopHeight(newHeightPercent);
+        setTopHeight(100 - newHeightPercent);
       }
     };
     const onMouseUp = () => setIsDraggingVertical(false);
@@ -459,20 +480,79 @@ export function App() {
 
     const client = new TermClient();
     termClientRef.current = client;
+    client.debug = true;
+    logTerm("terminal init", { terminalVisible, w: el.clientWidth, h: el.clientHeight });
 
-    // Ensure Codex TUI can query cursor position (CSI 6 n).
-    // xterm.js may not always send CPR fast enough for strict clients; respond explicitly.
+    // Ensure TUIs can query device/cursor status.
+    // xterm.js may not always answer strict clients fast enough; respond explicitly.
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (term as any).parser?.registerCsiHandler?.({ final: "n" }, (params: number[]) => {
-        if (params?.[0] !== 6) return false;
         const sid = termSessionIdRef.current;
         if (!sid) return true;
-        // xterm uses 0-based cursor position
-        const row = term.buffer.active.cursorY + 1;
-        const col = term.buffer.active.cursorX + 1;
-        const resp = `\u001b[${row};${col}R`;
-        void client.stdin(sid, resp).catch(() => {});
+        // CSI 5 n: "Status Report" -> "OK"
+        if (params?.[0] === 5) {
+          void client.stdin(sid, "\u001b[0n").catch(() => {});
+          return true;
+        }
+        // CSI 6 n: "Cursor Position Report"
+        if (params?.[0] === 6) {
+          // xterm uses 0-based cursor position
+          const row = term.buffer.active.cursorY + 1;
+          const col = term.buffer.active.cursorX + 1;
+          const resp = `\u001b[${row};${col}R`;
+          void client.stdin(sid, resp).catch(() => {});
+          return true;
+        }
+        return false;
+      });
+
+      // Primary Device Attributes (DA): CSI c
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (term as any).parser?.registerCsiHandler?.({ final: "c" }, (_params: number[]) => {
+        const sid = termSessionIdRef.current;
+        if (!sid) return true;
+        // Identify as xterm-like with common capabilities.
+        void client.stdin(sid, "\u001b[?62;1;2;6;7;8;9;15;18;21;22c").catch(() => {});
+        return true;
+      });
+
+      // Secondary Device Attributes (DA2): CSI > c
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (term as any).parser?.registerCsiHandler?.({ prefix: ">", final: "c" }, (_params: number[]) => {
+        const sid = termSessionIdRef.current;
+        if (!sid) return true;
+        // "xterm" style DA2 response: Pp; Pv; Pc
+        void client.stdin(sid, "\u001b[>0;276;0c").catch(() => {});
+        return true;
+      });
+    } catch {}
+
+    // Handle OSC 10/11 (foreground/background color query) for agent CLI.
+    // Agent may send ESC]10;?BEL / ESC]11;?BEL to query colors.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (term as any).parser?.registerOscHandler?.(10, (data: string) => {
+        if (data !== "?") return false;
+        const sid = termSessionIdRef.current;
+        if (!sid) return true;
+        // Respond with a black foreground color (rgb:0000/0000/0000).
+        // Send BOTH BEL and ST terminated variants (different TUIs accept different forms).
+        void client
+          .stdin(sid, "\x1b]10;rgb:0000/0000/0000\x07\x1b]10;rgb:0000/0000/0000\x1b\\")
+          .catch(() => {});
+        return true;
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (term as any).parser?.registerOscHandler?.(11, (data: string) => {
+        if (data !== "?") return false;
+        const sid = termSessionIdRef.current;
+        if (!sid) return true;
+        // Respond with a white background color (rgb:ffff/ffff/ffff).
+        // Send BOTH BEL and ST terminated variants (different TUIs accept different forms).
+        void client
+          .stdin(sid, "\x1b]11;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+          .catch(() => {});
         return true;
       });
     } catch {}
@@ -480,10 +560,38 @@ export function App() {
     client.onMsg = (m: TermServerMsg) => {
       if (m.t === "term.data" && m.sessionId === termSessionIdRef.current) {
         term.write(m.data);
+        logTerm("term.data", { sessionId: m.sessionId, bytes: m.data.length, head: m.data.slice(0, 24) });
+        // Cursor Agent interactive UI sometimes only renders after an initial keypress/resize.
+        // Nudge once after the banner appears (works for both cursor PTY and cursor-cli PTY).
+        if ((termModeRef.current === "cursor" || termModeRef.current === "cursor-cli") && !cursorPromptNudgedRef.current) {
+          if (m.data.includes("Cursor Agent")) {
+            cursorPromptNudgedRef.current = true;
+            const sid = termSessionIdRef.current;
+            if (sid) {
+              logTerm("nudge prompt: sending Enter", { sessionId: sid, termMode: termModeRef.current });
+              setTimeout(() => {
+                void client.stdin(sid, "\r").catch(() => {});
+                void client.resize(sid, term.cols, term.rows).catch(() => {});
+              }, 200);
+            }
+          }
+        }
       }
       if (m.t === "term.exit" && m.sessionId === termSessionIdRef.current) {
-        // In codex TUI mode, do not print extra prompts; let codex control the screen.
-        if (termModeRef.current !== "codex") term.write(`\r\n[exit ${m.code ?? "?"}]\r\n$ `);
+        logTerm("term.exit", { sessionId: m.sessionId, code: m.code });
+        // Clear session so new keystrokes can be buffered for the next open.
+        termSessionIdRef.current = "";
+        cursorPromptNudgedRef.current = false;
+        // In PTY TUI modes, don't print a shell prompt, but do show exit for debugging.
+        if (termModeRef.current === "codex") {
+          term.write(`\r\n[codex exited ${m.code ?? "?"}]\r\n`);
+        } else if (termModeRef.current === "cursor") {
+          term.write(`\r\n[cursor exited ${m.code ?? "?"}]\r\n`);
+        } else if (termModeRef.current === "cursor-cli") {
+          term.write(`\r\n[cursor-cli exited ${m.code ?? "?"}]\r\n`);
+        } else {
+          term.write(`\r\n[exit ${m.code ?? "?"}]\r\n$ `);
+        }
       }
     };
 
@@ -500,7 +608,11 @@ export function App() {
 
     term.onData((data) => {
       const sid = termSessionIdRef.current;
-      if (!sid) return;
+      if (!sid) {
+        // Session is still opening; buffer keystrokes so user can type immediately after switching modes.
+        termPendingStdinRef.current += data;
+        return;
+      }
       // Local echo with basic editing (server doesn't echo input back).
       // Also: in restricted mode, typing `codex` + Enter will switch to codex mode.
       const isEnter = data === "\r" || data === "\n" || data === "\r\n";
@@ -521,15 +633,15 @@ export function App() {
           termInputBufRef.current += data;
           term.write(data);
         }
-      } else if (termModeRef.current === "codex") {
-        // In codex TUI mode (PTY), the remote process echoes input itself.
+      } else if (termModeRef.current === "codex" || termModeRef.current === "cursor" || termModeRef.current === "cursor-cli") {
+        // In PTY TUI mode (codex/cursor/cursor-cli), the remote process echoes input itself.
       } else {
         // native: echo locally (server doesn't echo input)
         if (data === "\u007f" || data === "\b") term.write("\b \b");
         else term.write(data);
       }
       void client.stdin(sid, data).catch((e) => {
-        if (termModeRef.current === "codex") {
+        if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
           term.write(`\r\n[error] ${e?.message ?? String(e)}\r\n`);
         } else {
           term.write(`\r\n[error] ${e?.message ?? String(e)}\r\n$ `);
@@ -553,6 +665,20 @@ export function App() {
     };
   }, [safeFitTerm, terminalVisible]);
 
+  // When switching back from Cursor (chat) to terminal, the xterm container may have been hidden.
+  // Trigger a fit + backend resize so the terminal renders correctly.
+  useEffect(() => {
+    if (!terminalVisible) return;
+    if (termMode === "cursor") return;
+    requestAnimationFrame(() => requestAnimationFrame(() => safeFitTerm()));
+    const sid = termSessionIdRef.current;
+    const term = termRef.current;
+    const client = termClientRef.current;
+    if (sid && term && client) {
+      void client.resize(sid, term.cols, term.rows).catch(() => {});
+    }
+  }, [terminalVisible, termMode, safeFitTerm]);
+
   // Terminal cleanup (unmount only)
   useEffect(() => {
     return () => {
@@ -561,7 +687,13 @@ export function App() {
       } catch {}
       termResizeObsRef.current = null;
       try {
-        termClientRef.current?.close();
+        // Avoid closing WS during HMR to prevent dropping live PTY sessions.
+        // In production/unload, the browser will close the socket anyway.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const isHmr = (import.meta as any)?.hot;
+        if (!isHmr) {
+          termClientRef.current?.close();
+        }
       } catch {}
       try {
         termRef.current?.dispose();
@@ -574,57 +706,103 @@ export function App() {
     };
   }, []);
 
-  // (Re)open terminal session when root changes.
+  // (Re)open terminal session when root changes or mode changes.
   useEffect(() => {
     const client = termClientRef.current;
     const term = termRef.current;
     if (!terminalVisible || !client || !term || !terminalCwd) return;
 
+    // Cursor (chat panel) is NOT a terminal backend mode.
+    // Do not open a WS term session; close any existing one to avoid confusing errors like:
+    // "[error] term: Unknown mode: cursor"
+    if (termMode === "cursor") {
+      (async () => {
+        const old = termSessionIdRef.current;
+        if (old) {
+          termSessionIdRef.current = "";
+          lastOpenKeyRef.current = "";
+          cursorPromptNudgedRef.current = false;
+          await client.closeSession(old).catch(() => {});
+        }
+      })();
+      return;
+    }
+
+    const openKey =
+      `${terminalCwd}::${termMode}` +
+      (termMode === "cursor" ? `::${cursorMode}` : "") +
+      (termMode === "cursor-cli" ? `::${cursorCliMode}` : "");
+
+    // Only reopen if we don't already have the correct session open.
+    if (termSessionIdRef.current && lastOpenKeyRef.current === openKey) {
+      return;
+    }
+
     (async () => {
       try {
+        logTerm("open session begin", { terminalCwd, termMode, cursorMode, cursorCliMode, openKey });
+
         // Close previous session if any.
         if (termSessionIdRef.current) {
           const old = termSessionIdRef.current;
           termSessionIdRef.current = "";
+          lastOpenKeyRef.current = "";
+          logTerm("closing previous session", { old });
           await client.closeSession(old).catch(() => {});
         }
         
         // Determine actual mode for WebSocket
-        let actualMode: "restricted" | "codex" | "agent" | "plan" | "ask" = termMode === "cursor" ? cursorMode : termMode;
+        let actualMode: "restricted" | "codex" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
+        if (termMode === "cursor-cli") {
+          actualMode = `cursor-cli-${cursorCliMode}` as any;
+        } else {
+          actualMode = termMode as any;
+        }
+        logTerm("actualMode", { actualMode });
         
-        // Reset terminal when switching into codex/cursor mode to avoid polluting the TUI.
-        if (termMode === "codex" || termMode === "cursor") {
+        // Reset terminal when switching into codex/cursor-cli mode to avoid polluting the TUI.
+        if (termMode === "codex" || termMode === "cursor-cli") {
           term.reset();
         } else {
           term.write(`\r\n[session] opening at ${terminalCwd}\r\n`);
         }
 
-        // Build options for cursor modes
-        const options = termMode === "cursor" ? {
-          prompt: quickPrompt || undefined,
-          resume: cursorThreadId || undefined,
-        } : undefined;
-
-        const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode, options);
+        const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode);
         if (!resp.ok || !resp.sessionId) throw new Error(resp.error ?? "term.open failed");
         termSessionIdRef.current = resp.sessionId;
-        
-        // Save threadId for resume functionality
-        if (resp.threadId) {
-          setCursorThreadId(resp.threadId);
+        lastOpenKeyRef.current = openKey;
+        cursorPromptNudgedRef.current = false;
+        logTerm("open session ok", { sessionId: resp.sessionId, cwd: resp.cwd, mode: resp.mode });
+        // After session opens, force focus back to xterm.
+        // This helps when the mode button/dropdown stole focus.
+        term.focus();
+        requestAnimationFrame(() => term.focus());
+
+        // Send a single resize event to initialize the PTY dimensions
+        logTerm("resize after open", { sessionId: resp.sessionId, cols: term.cols, rows: term.rows });
+        void client.resize(resp.sessionId, term.cols, term.rows).catch(() => {});
+
+        // For cursor modes, wait a bit for UI to render, then send a dummy input to keep the session alive
+        if (termMode === "cursor") {
+          await new Promise((r) => setTimeout(r, 1500));
+          // Send a single space to wake up the interactive prompt (will be visible but harmless)
+          await client.stdin(resp.sessionId, " ").catch(() => {});
         }
-        
-        // Clear quick prompt after use
-        if (quickPrompt) {
-          setQuickPrompt("");
+
+        // Flush any keystrokes typed while the session was opening.
+        const pending = termPendingStdinRef.current;
+        if (pending) {
+          termPendingStdinRef.current = "";
+          await client.stdin(resp.sessionId, pending).catch(() => {});
         }
-        
-        if (termModeRef.current !== "codex" && termModeRef.current !== "cursor") term.write("$ ");
+
+        if (termMode !== "codex" && termMode !== "cursor" && termMode !== "cursor-cli") term.write("$ ");
       } catch (e: any) {
+        lastOpenKeyRef.current = "";
         setStatus(`[error] term: ${e?.message ?? String(e)}`);
       }
     })();
-  }, [terminalCwd, terminalVisible, termMode, cursorMode, quickPrompt]);
+  }, [terminalCwd, terminalVisible, termMode, cursorMode, cursorCliMode]);
 
   const ExplorerPanel = (
     <div className={"panel" + (isMobile && mobileTab !== "explorer" ? " hidden" : "")} style={{ flex: isMobile ? 1 : undefined }}>
@@ -656,7 +834,11 @@ export function App() {
   const EditorPanel = (
     <div
       className={"panel" + (isMobile && mobileTab !== "editor" ? " hidden" : "")}
-      style={{ flex: isMobile ? 1 : undefined, height: isMobile ? undefined : `${topHeight}%`, minHeight: isMobile ? undefined : 0 }}
+      style={{
+        flex: isMobile ? 1 : undefined,
+        height: isMobile ? undefined : `${100 - topHeight}%`,
+        minHeight: isMobile ? undefined : 0,
+      }}
     >
       {openTabs.length ? (
         <div className="tabStrip" role="tablist" aria-label="Open files">
@@ -755,84 +937,69 @@ export function App() {
   );
 
   const TerminalPanel = (
-    <div className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")} style={{ flex: isMobile ? 1 : 1, minHeight: isMobile ? undefined : 0 }}>
+    <div
+      className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")}
+      style={{
+        flex: isMobile ? 1 : undefined,
+        height: isMobile ? undefined : `${topHeight}%`,
+        minHeight: isMobile ? undefined : 0,
+      }}
+    >
       <div className="panelHeader">
         <h2>Terminal</h2>
+        <span
+          className="fileMeta"
+          title={terminalCwd}
+          style={{
+            marginLeft: 8,
+            maxWidth: 520,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {terminalCwd ? `cwd: ${terminalCwd}` : ""}
+        </span>
         <div className="row" style={{ marginLeft: "auto", gap: "8px", alignItems: "center" }}>
           <div className="segmented" aria-label="Terminal mode">
-            <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => setTermMode("restricted")}>
+            <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
+              setTermMode("restricted");
+              termRef.current?.focus();
+              setTimeout(() => termRef.current?.focus(), 50);
+            }}>
               Restricted
             </button>
-            <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => setTermMode("codex")}>
+            <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
+              setTermMode("codex");
+              termRef.current?.focus();
+              setTimeout(() => termRef.current?.focus(), 50);
+            }}>
               Codex
             </button>
-            <div className="cursorBtnWrapper" style={{ position: "relative" }}>
-              <button 
-                className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")} 
-                onClick={() => {
-                  setTermMode("cursor");
-                  setShowCursorDropdown(!showCursorDropdown);
-                }}
-                onBlur={(e) => {
-                  // Only hide if focus is not moving to dropdown
-                  if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
-                    setTimeout(() => setShowCursorDropdown(false), 150);
-                  }
-                }}
-              >
-                Cursor ({cursorMode}) ▼
-              </button>
-              {showCursorDropdown && (
-                <div className="cursorDropdown">
-                  <button onClick={() => { setCursorMode("agent"); setShowCursorDropdown(false); setTermMode("cursor"); }}>
-                    Agent
-                  </button>
-                  <button onClick={() => { setCursorMode("plan"); setShowCursorDropdown(false); setTermMode("cursor"); }}>
-                    Plan
-                  </button>
-                  <button onClick={() => { setCursorMode("ask"); setShowCursorDropdown(false); setTermMode("cursor"); }}>
-                    Ask
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
+              onClick={() => {
+                setTermMode("cursor");
+              }}
+              title="Cursor AI (non-interactive mode)"
+            >
+              Cursor
+            </button>
           </div>
-          
-          {termMode === "cursor" && (
-            <>
-              <input
-                type="text"
-                className="promptInput"
-                placeholder="Quick prompt (Enter to run)..."
-                value={quickPrompt}
-                onChange={(e) => setQuickPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && quickPrompt.trim()) {
-                    // Trigger session restart with prompt by changing terminalCwd state
-                    setTerminalCwd(terminalCwd);
-                  }
-                }}
-                style={{ flex: 1, maxWidth: "300px" }}
-              />
-              {cursorThreadId && (
-                <button 
-                  className="btn" 
-                  onClick={() => {
-                    // Clear prompt and trigger resume
-                    setQuickPrompt("");
-                    setTerminalCwd(terminalCwd);
-                  }}
-                  title="Resume last conversation"
-                  style={{ fontSize: "11px", padding: "4px 8px" }}
-                >
-                  Resume
-                </button>
-              )}
-            </>
-          )}
         </div>
       </div>
-      <div className="term" ref={termDivRef} />
+      
+      {/* Keep both views mounted; toggle visibility to avoid xterm losing its container */}
+      <div style={{ display: termMode === "cursor" ? "block" : "none", flex: 1, minHeight: 0 }}>
+        <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
+      </div>
+      <div
+        className="term"
+        ref={termDivRef}
+        style={{ display: termMode === "cursor" ? "none" : "block" }}
+        onMouseDown={() => termRef.current?.focus()}
+        onTouchStart={() => termRef.current?.focus()}
+      />
     </div>
   );
 
@@ -949,8 +1116,7 @@ export function App() {
         <div
           style={{
             position: "fixed",
-            left: 12,
-            bottom: 12,
+            top: 12,
             right: 12,
             background: "rgba(255,255,255,0.92)",
             border: "1px solid var(--border)",
@@ -960,6 +1126,8 @@ export function App() {
             fontSize: 12,
             color: "var(--text)",
             boxShadow: "var(--shadow)",
+            maxWidth: 520,
+            zIndex: 50,
           }}
         >
           {status}

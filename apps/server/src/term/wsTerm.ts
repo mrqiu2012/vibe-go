@@ -7,9 +7,7 @@ import { TermManager } from "./session.js";
 import { NativeShellManager } from "./nativeShellManager.js";
 import { CodexManager } from "./codexManager.js";
 import { PtyCodexManager } from "./ptyCodexManager.js";
-import { AgentManager } from "./agentManager.js";
-import { PlanManager } from "./planManager.js";
-import { AskManager } from "./askManager.js";
+import { CursorCliManager } from "./cursorCliManager.js";
 
 function safeJsonParse(text: string): any | null {
   try {
@@ -62,17 +60,7 @@ export function attachTermWs(opts: {
       validateCwd: opts.validateCwd,
       send: (m) => send(ws, m as TermServerMsg),
     });
-    const agentMgr = new AgentManager({
-      maxSessions: opts.maxSessions,
-      validateCwd: opts.validateCwd,
-      send: (m) => send(ws, m as TermServerMsg),
-    });
-    const planMgr = new PlanManager({
-      maxSessions: opts.maxSessions,
-      validateCwd: opts.validateCwd,
-      send: (m) => send(ws, m as TermServerMsg),
-    });
-    const askMgr = new AskManager({
+    const cursorCliMgr = new CursorCliManager({
       maxSessions: opts.maxSessions,
       validateCwd: opts.validateCwd,
       send: (m) => send(ws, m as TermServerMsg),
@@ -103,7 +91,7 @@ export function attachTermWs(opts: {
           const cwd = (msg as any).cwd;
           const cols = Number((msg as any).cols ?? 120);
           const rows = Number((msg as any).rows ?? 30);
-          const mode = String((msg as any).mode ?? "restricted") as "restricted" | "native" | "codex" | "agent" | "plan" | "ask";
+          const mode = String((msg as any).mode ?? "restricted") as "restricted" | "native" | "codex" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
           const options = (msg as any).options;
           if (typeof cwd !== "string" || cwd.length === 0) return fail("term.open", "Missing cwd");
           if (!Number.isFinite(cols) || !Number.isFinite(rows)) return fail("term.open", "Invalid cols/rows");
@@ -131,50 +119,16 @@ export function attachTermWs(opts: {
                 data: `\r\n[codex] PTY unavailable, using exec mode: ${e?.message ?? String(e)}\r\n`,
               });
             }
-          } else if (mode === "agent") {
+          } else if (mode === "cursor-cli-agent" || mode === "cursor-cli-plan" || mode === "cursor-cli-ask") {
+            const cliMode = mode === "cursor-cli-agent" ? "agent" : mode === "cursor-cli-plan" ? "plan" : "ask";
+            console.log(`[wsTerm] Opening cursor-cli session`, { mode, cliMode, realCwd, cols, rows });
             try {
-              const s = await agentMgr.open(realCwd, cols, rows, options);
-              send(ws, { 
-                t: "term.open.resp", 
-                reqId, 
-                ok: true, 
-                sessionId: s.id, 
-                cwd: s.cwd,
-                mode: "agent",
-                threadId: s.threadId 
-              });
+              const s = await cursorCliMgr.open(realCwd, cols, rows, cliMode);
+              console.log(`[wsTerm] cursor-cli session opened`, { sessionId: s.id, cwd: s.cwd });
+              send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
             } catch (e: any) {
-              return fail("term.open", `Agent failed: ${e?.message ?? String(e)}`);
-            }
-          } else if (mode === "plan") {
-            try {
-              const s = await planMgr.open(realCwd, cols, rows, options);
-              send(ws, { 
-                t: "term.open.resp", 
-                reqId, 
-                ok: true, 
-                sessionId: s.id, 
-                cwd: s.cwd,
-                mode: "plan",
-                threadId: s.threadId 
-              });
-            } catch (e: any) {
-              return fail("term.open", `Plan mode failed: ${e?.message ?? String(e)}`);
-            }
-          } else if (mode === "ask") {
-            try {
-              const s = await askMgr.open(realCwd, cols, rows, options);
-              send(ws, { 
-                t: "term.open.resp", 
-                reqId, 
-                ok: true, 
-                sessionId: s.id, 
-                cwd: s.cwd,
-                mode: "ask",
-                threadId: s.threadId 
-              });
-            } catch (e: any) {
-              return fail("term.open", `Ask mode failed: ${e?.message ?? String(e)}`);
+              console.error(`[wsTerm] cursor-cli open failed:`, e);
+              return fail("term.open", `Cursor CLI (${cliMode}) failed: ${e?.message ?? String(e)}`);
             }
           } else {
             return fail("term.open", `Unknown mode: ${mode}`);
@@ -185,9 +139,7 @@ export function attachTermWs(opts: {
         if (t === "term.close") {
           const sessionId = (msg as any).sessionId;
           if (typeof sessionId !== "string" || !sessionId) return fail("term.close", "Missing sessionId");
-          if (askMgr.has(sessionId)) askMgr.close(sessionId);
-          else if (planMgr.has(sessionId)) planMgr.close(sessionId);
-          else if (agentMgr.has(sessionId)) agentMgr.close(sessionId);
+          if (cursorCliMgr.has(sessionId)) cursorCliMgr.close(sessionId);
           else if (codexPtyMgr.has(sessionId)) codexPtyMgr.close(sessionId);
           else if (codexMgr.has(sessionId)) codexMgr.close(sessionId);
           else if (nativeMgr.has(sessionId)) nativeMgr.close(sessionId);
@@ -203,9 +155,7 @@ export function attachTermWs(opts: {
           const rows = Number((msg as any).rows);
           if (typeof sessionId !== "string" || !sessionId) return fail("term.resize", "Missing sessionId");
           if (!Number.isFinite(cols) || !Number.isFinite(rows)) return fail("term.resize", "Invalid cols/rows");
-          if (askMgr.has(sessionId)) askMgr.resize(sessionId, cols, rows);
-          else if (planMgr.has(sessionId)) planMgr.resize(sessionId, cols, rows);
-          else if (agentMgr.has(sessionId)) agentMgr.resize(sessionId, cols, rows);
+          if (cursorCliMgr.has(sessionId)) cursorCliMgr.resize(sessionId, cols, rows);
           else if (codexPtyMgr.has(sessionId)) codexPtyMgr.resize(sessionId, cols, rows);
           else if (codexMgr.has(sessionId)) codexMgr.resize(sessionId, cols, rows);
           else if (nativeMgr.has(sessionId)) nativeMgr.resize(sessionId, cols, rows);
@@ -219,14 +169,25 @@ export function attachTermWs(opts: {
           const dataStr = (msg as any).data;
           if (typeof sessionId !== "string" || !sessionId) return fail("term.stdin", "Missing sessionId");
           if (typeof dataStr !== "string") return fail("term.stdin", "Missing data");
-          if (askMgr.has(sessionId)) askMgr.stdin(sessionId, dataStr);
-          else if (planMgr.has(sessionId)) planMgr.stdin(sessionId, dataStr);
-          else if (agentMgr.has(sessionId)) agentMgr.stdin(sessionId, dataStr);
-          else if (codexPtyMgr.has(sessionId)) codexPtyMgr.stdin(sessionId, dataStr);
-          else if (codexMgr.has(sessionId)) await codexMgr.stdin(sessionId, dataStr);
-          else if (nativeMgr.has(sessionId)) await nativeMgr.stdin(sessionId, dataStr);
-          else await term.stdin(sessionId, dataStr);
+          // IMPORTANT: stdin must be ACKed quickly.
+          // Some backends (native/restricted exec) may run long commands on Enter; awaiting them here
+          // makes the client think input is broken (request timeouts). Output is streamed via term.data.
           send(ws, { t: "term.stdin.resp", reqId, ok: true });
+          if (cursorCliMgr.has(sessionId)) cursorCliMgr.stdin(sessionId, dataStr);
+          else if (codexPtyMgr.has(sessionId)) codexPtyMgr.stdin(sessionId, dataStr);
+          else if (codexMgr.has(sessionId)) {
+            void codexMgr.stdin(sessionId, dataStr).catch((e: any) => {
+              send(ws, { t: "term.data", sessionId, data: `\r\n[error] ${e?.message ?? String(e)}\r\n` });
+            });
+          } else if (nativeMgr.has(sessionId)) {
+            void nativeMgr.stdin(sessionId, dataStr).catch((e: any) => {
+              send(ws, { t: "term.data", sessionId, data: `\r\n[error] ${e?.message ?? String(e)}\r\n` });
+            });
+          } else {
+            void term.stdin(sessionId, dataStr).catch((e: any) => {
+              send(ws, { t: "term.data", sessionId, data: `\r\n[error] ${e?.message ?? String(e)}\r\n` });
+            });
+          }
           return;
         }
 
@@ -238,7 +199,7 @@ export function attachTermWs(opts: {
 
     ws.on("close", () => {
       // Best-effort: close all sessions when browser disconnects.
-      const managers = [codexMgr, codexPtyMgr, agentMgr, planMgr, askMgr];
+      const managers = [cursorCliMgr, codexMgr, codexPtyMgr];
       for (const mgr of managers) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,11 +207,9 @@ export function attachTermWs(opts: {
           const sessions: Map<string, any> | undefined = anyMgr?.sessions;
           if (sessions && typeof sessions.forEach === "function") {
             sessions.forEach((_v: any, k: string) => {
-              if (mgr === codexMgr) codexMgr.close(k);
+              if (mgr === cursorCliMgr) cursorCliMgr.close(k);
+              else if (mgr === codexMgr) codexMgr.close(k);
               else if (mgr === codexPtyMgr) codexPtyMgr.close(k);
-              else if (mgr === agentMgr) agentMgr.close(k);
-              else if (mgr === planMgr) planMgr.close(k);
-              else if (mgr === askMgr) askMgr.close(k);
             });
           }
         } catch {}

@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { normalizeRoots, validatePathInRoots } from "./pathGuard.js";
 import { listDir, readTextFile, writeTextFile } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
+import { executeCursorAgent, spawnCursorAgentStream } from "./cursorAgent.js";
 
 function getRepoRoot() {
   const __filename = fileURLToPath(import.meta.url);
@@ -106,6 +107,101 @@ async function main() {
       res.json({ ok: true, ...r });
     } catch (e: any) {
       res.status(400).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/cursor-agent", async (req, res) => {
+    try {
+      const prompt = String(req.body?.prompt ?? "");
+      const mode = String(req.body?.mode ?? "agent") as "agent" | "plan" | "ask";
+      const cwd = String(req.body?.cwd ?? roots[0] ?? "");
+      
+      if (!prompt.trim()) {
+        return res.status(400).json({ ok: false, error: "Missing prompt" });
+      }
+
+      // Validate cwd is in roots
+      const realCwd = await validatePathInRoots(cwd, roots);
+      
+      const result = await executeCursorAgent(prompt, mode, realCwd);
+      res.json({ ok: true, result });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/cursor-agent/stream", async (req, res) => {
+    try {
+      const prompt = String(req.body?.prompt ?? "");
+      const mode = String(req.body?.mode ?? "agent") as "agent" | "plan" | "ask";
+      const cwd = String(req.body?.cwd ?? roots[0] ?? "");
+      const force = typeof req.body?.force === "boolean" ? Boolean(req.body.force) : true;
+      const resume = typeof req.body?.resume === "string" ? String(req.body.resume) : "";
+
+      if (!prompt.trim()) {
+        return res.status(400).json({ ok: false, error: "Missing prompt" });
+      }
+
+      // Validate cwd is in roots
+      const realCwd = await validatePathInRoots(cwd, roots);
+
+      res.status(200);
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      // Disable proxy buffering (best-effort; harmless if ignored)
+      res.setHeader("X-Accel-Buffering", "no");
+      // Flush headers early so the client starts reading immediately.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (res as any).flushHeaders?.();
+
+      let ended = false;
+      const safeWrite = (line: string) => {
+        if (ended) return;
+        try {
+          res.write(line.endsWith("\n") ? line : line + "\n");
+        } catch {}
+      };
+
+      const { stop } = await spawnCursorAgentStream({
+        prompt,
+        mode,
+        cwd: realCwd,
+        force,
+        resume: resume.trim() ? resume.trim() : undefined,
+        timeoutMs: 60000,
+        onStdoutLine: (line) => safeWrite(line),
+        onStderrLine: (line) => safeWrite(JSON.stringify({ type: "stderr", message: line })),
+        onExit: ({ code, signal, timedOut }) => {
+          safeWrite(JSON.stringify({ type: "result", exitCode: code, signal, timedOut }));
+          ended = true;
+          try {
+            res.end();
+          } catch {}
+        },
+      });
+
+      // If client disconnects, stop the child to avoid leaks.
+      req.on("close", () => {
+        if (ended) return;
+        ended = true;
+        try {
+          stop();
+        } catch {}
+      });
+    } catch (e: any) {
+      // If we haven't started streaming, return JSON error.
+      // If we already started, best-effort emit an NDJSON error and end.
+      try {
+        const headersSent = res.headersSent;
+        if (!headersSent) {
+          return res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+        }
+        res.write(JSON.stringify({ type: "error", message: e?.message ?? String(e) }) + "\n");
+        res.end();
+      } catch {
+        // ignore
+      }
     }
   });
 

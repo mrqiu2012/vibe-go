@@ -15,26 +15,48 @@ export class TermClient {
   private pending = new Map<string, (msg: any) => void>();
   private outbox: string[] = [];
   onMsg?: (msg: TermServerMsg) => void;
+  debug = true; // Enable for debugging CLI-Agent
+
+  private log(...args: any[]) {
+    if (!this.debug) return;
+    // eslint-disable-next-line no-console
+    console.log("[TermClient]", ...args);
+  }
 
   connect(): Promise<void> {
-    const url = `${window.location.origin.replace(/^http/, "ws")}/ws/term`;
+    const loc = window.location;
+    const isSameServer = loc.port === "3005";
+    const wsProto = loc.protocol === "https:" ? "wss" : "ws";
+    // In dev/preview, connect directly to backend WS (Vite preview doesn't proxy WS).
+    const url = isSameServer
+      ? `${loc.origin.replace(/^http/, "ws")}/ws/term`
+      : `${wsProto}://${loc.hostname}:3005/ws/term`;
+    this.log("connect()", { url });
     this.ws = new WebSocket(url);
     const ws = this.ws;
     const p = new Promise<void>((resolve, reject) => {
       ws.onopen = () => {
+        this.log("ws.onopen");
         // Flush queued messages issued before open.
         const queued = this.outbox;
         this.outbox = [];
         for (const m of queued) ws.send(m);
         resolve();
       };
-      ws.onerror = () => reject(new Error("ws error"));
+      ws.onerror = (ev) => {
+        this.log("ws.onerror", ev);
+        reject(new Error("ws error"));
+      };
     });
+    this.ws.onclose = (ev) => {
+      this.log("ws.onclose", { code: ev.code, reason: ev.reason, wasClean: ev.wasClean });
+    };
     this.ws.onmessage = (ev) => this.onMessage(String(ev.data));
     return p;
   }
 
   close() {
+    this.log("close()");
     this.ws?.close();
     this.ws = null;
     this.pending.clear();
@@ -46,6 +68,7 @@ export class TermClient {
     const p = new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(reqId);
+        this.log("request timeout", { t: msg?.t, reqId });
         reject(new Error("request timeout"));
       }, 15000);
       this.pending.set(reqId, (m) => {
@@ -55,6 +78,7 @@ export class TermClient {
     });
     if (!this.ws) throw new Error("ws not connected");
     const payload = JSON.stringify(msg);
+    this.log("send", { t: msg?.t, reqId, sessionId: msg?.sessionId, bytes: payload.length });
     if (this.ws.readyState !== WebSocket.OPEN) {
       this.outbox.push(payload);
     } else {
@@ -115,6 +139,15 @@ export class TermClient {
       msg = JSON.parse(raw);
     } catch {
       return;
+    }
+    if (msg?.t === "term.data") {
+      this.log("recv term.data", { sessionId: msg.sessionId, bytes: (msg.data?.length ?? 0) });
+    } else if (msg?.t === "term.exit") {
+      this.log("recv term.exit", { sessionId: msg.sessionId, code: msg.code });
+    } else if (typeof msg?.t === "string" && String(msg.t).endsWith(".resp")) {
+      this.log("recv resp", { t: msg.t, reqId: msg.reqId, ok: msg.ok, error: msg.error });
+    } else {
+      this.log("recv", { t: msg?.t });
     }
     this.onMsg?.(msg as TermServerMsg);
     if (msg?.reqId && typeof msg.t === "string" && String(msg.t).endsWith(".resp")) {
