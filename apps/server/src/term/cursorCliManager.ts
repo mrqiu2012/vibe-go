@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TermServerMsg } from "../../../protocol/src/messages.js";
+import type { TermServerMsg } from "@web-ide/protocol";
 
 type SendFn = (msg: TermServerMsg) => void;
 
@@ -147,7 +147,7 @@ export class CursorCliManager {
       this.send({ t: "term.data", sessionId, data });
     });
 
-    term.onExit((e: { exitCode: number; signal?: number }) => {
+    term.onExit((e: { exitCode?: number; signal?: number }) => {
       console.log(`[CursorCliManager] exit ${sessionId}:`, e);
       this.send({ t: "term.exit", sessionId, code: e.exitCode });
       this.sessions.delete(sessionId);

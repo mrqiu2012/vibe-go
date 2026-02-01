@@ -10,6 +10,24 @@ import { normalizeRoots, validatePathInRoots } from "./pathGuard.js";
 import { listDir, readTextFile, writeTextFile } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
 import { executeCursorAgent, spawnCursorAgentStream } from "./cursorAgent.js";
+import {
+  getAllSessions,
+  getSession,
+  createSession,
+  updateSession,
+  deleteSession,
+  addMessage,
+  updateMessage,
+  getAllWorkspaces,
+  getActiveWorkspace,
+  createWorkspace,
+  setActiveWorkspace,
+  deleteWorkspace,
+  getWorkspaceByCwd,
+  type ChatSession,
+  type Message,
+  type Workspace,
+} from "./db.js";
 
 function getRepoRoot() {
   const __filename = fileURLToPath(import.meta.url);
@@ -169,7 +187,10 @@ async function main() {
         cwd: realCwd,
         force,
         resume: resume.trim() ? resume.trim() : undefined,
-        timeoutMs: 60000,
+        // Inactivity timeout: kill agent if no output for this duration.
+        // Config timeoutSec is used (default 900s = 15 min), but with activity
+        // detection the timer resets on each output, so it only triggers if stuck.
+        timeoutMs: timeoutSec * 1000,
         onStdoutLine: (line) => safeWrite(line),
         onStderrLine: (line) => safeWrite(JSON.stringify({ type: "stderr", message: line })),
         onExit: ({ code, signal, timedOut }) => {
@@ -204,6 +225,204 @@ async function main() {
       }
     }
   });
+
+  // ==================== Chat Session APIs ====================
+
+  // Get all sessions for a given cwd
+  app.get("/api/chat/sessions", (req, res) => {
+    try {
+      const cwd = String(req.query.cwd ?? "");
+      if (!cwd) {
+        return res.status(400).json({ ok: false, error: "Missing cwd parameter" });
+      }
+      const sessions = getAllSessions(cwd);
+      res.json({ ok: true, sessions });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Get a single session by ID
+  app.get("/api/chat/sessions/:id", (req, res) => {
+    try {
+      const session = getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ ok: false, error: "Session not found" });
+      }
+      res.json({ ok: true, session });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Create a new session
+  app.post("/api/chat/sessions", (req, res) => {
+    try {
+      const { id, cwd, title, messages, createdAt, updatedAt } = req.body;
+      if (!id || !cwd) {
+        return res.status(400).json({ ok: false, error: "Missing required fields" });
+      }
+      const session: ChatSession = {
+        id,
+        cwd,
+        title: title || "New Chat",
+        messages: messages || [],
+        createdAt: createdAt || Date.now(),
+        updatedAt: updatedAt || Date.now(),
+      };
+      const created = createSession(session);
+      res.json({ ok: true, session: created });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Update a session
+  app.put("/api/chat/sessions/:id", (req, res) => {
+    try {
+      const existing = getSession(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ ok: false, error: "Session not found" });
+      }
+      const { title, messages, updatedAt } = req.body;
+      const updated = updateSession({
+        ...existing,
+        title: title ?? existing.title,
+        messages: messages ?? existing.messages,
+        updatedAt: updatedAt ?? Date.now(),
+      });
+      res.json({ ok: true, session: updated });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Delete a session
+  app.delete("/api/chat/sessions/:id", (req, res) => {
+    try {
+      const deleted = deleteSession(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ ok: false, error: "Session not found" });
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Add a message to a session
+  app.post("/api/chat/sessions/:id/messages", (req, res) => {
+    try {
+      const session = getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ ok: false, error: "Session not found" });
+      }
+      const { id, role, content, timestamp } = req.body;
+      if (!id || !role || content === undefined) {
+        return res.status(400).json({ ok: false, error: "Missing required message fields" });
+      }
+      const message: Message = {
+        id,
+        role,
+        content,
+        timestamp: timestamp || Date.now(),
+      };
+      addMessage(req.params.id, message);
+      res.json({ ok: true, message });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Update a message content
+  app.patch("/api/chat/messages/:id", (req, res) => {
+    try {
+      const { content } = req.body;
+      if (content === undefined) {
+        return res.status(400).json({ ok: false, error: "Missing content" });
+      }
+      updateMessage(req.params.id, content);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // ==================== End Chat Session APIs ====================
+
+  // ==================== Workspace APIs ====================
+
+  // Get all workspaces
+  app.get("/api/workspaces", (_req, res) => {
+    try {
+      const workspaces = getAllWorkspaces();
+      const active = getActiveWorkspace();
+      res.json({ ok: true, workspaces, activeId: active?.id ?? null });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Create a new workspace
+  app.post("/api/workspaces", (req, res) => {
+    try {
+      const { id, cwd, name, isActive } = req.body;
+      if (!id || !cwd || !name) {
+        return res.status(400).json({ ok: false, error: "Missing required fields" });
+      }
+      
+      // Check if workspace with same cwd already exists
+      const existing = getWorkspaceByCwd(cwd);
+      if (existing) {
+        // If already exists, just set it as active if requested
+        if (isActive) {
+          setActiveWorkspace(existing.id);
+        }
+        return res.json({ ok: true, workspace: { ...existing, isActive: isActive ?? existing.isActive } });
+      }
+      
+      const workspace = createWorkspace({
+        id,
+        cwd,
+        name,
+        isActive: isActive ?? false,
+        createdAt: Date.now(),
+      });
+      
+      if (isActive) {
+        setActiveWorkspace(workspace.id);
+      }
+      
+      res.json({ ok: true, workspace });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Set active workspace
+  app.put("/api/workspaces/:id/active", (req, res) => {
+    try {
+      setActiveWorkspace(req.params.id);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // Delete a workspace
+  app.delete("/api/workspaces/:id", (req, res) => {
+    try {
+      const deleted = deleteWorkspace(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ ok: false, error: "Workspace not found" });
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // ==================== End Workspace APIs ====================
 
   // Serve built web if exists (after `pnpm --filter @web-ide/web build`)
   const webDist = path.join(repoRoot, "apps", "web", "dist");

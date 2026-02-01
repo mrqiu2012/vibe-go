@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 type Message = {
@@ -6,6 +6,15 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+};
+
+type ChatSession = {
+  id: string;
+  cwd: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  updatedAt: number;
 };
 
 function randomId() {
@@ -25,8 +34,91 @@ function extractAssistantText(evt: StreamJsonLine): string {
   return "";
 }
 
-function storageKeyForCwd(cwd: string) {
-  return `cursorChatId::${cwd}`;
+// ==================== Chat API ====================
+
+async function fetchSessions(cwd: string): Promise<ChatSession[]> {
+  try {
+    const res = await fetch(`/api/chat/sessions?cwd=${encodeURIComponent(cwd)}`);
+    const data = await res.json();
+    if (data.ok) return data.sessions;
+    console.error("[ChatAPI] fetchSessions error:", data.error);
+    return [];
+  } catch (e) {
+    console.error("[ChatAPI] fetchSessions error:", e);
+    return [];
+  }
+}
+
+async function createSessionApi(session: ChatSession): Promise<ChatSession | null> {
+  try {
+    const res = await fetch("/api/chat/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(session),
+    });
+    const data = await res.json();
+    if (data.ok) return data.session;
+    console.error("[ChatAPI] createSession error:", data.error);
+    return null;
+  } catch (e) {
+    console.error("[ChatAPI] createSession error:", e);
+    return null;
+  }
+}
+
+async function updateSessionApi(session: ChatSession): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/chat/sessions/${session.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: session.title,
+        messages: session.messages,
+        updatedAt: session.updatedAt,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) console.error("[ChatAPI] updateSession error:", data.error);
+    return data.ok;
+  } catch (e) {
+    console.error("[ChatAPI] updateSession error:", e);
+    return false;
+  }
+}
+
+async function deleteSessionApi(sessionId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/chat/sessions/${sessionId}`, {
+      method: "DELETE",
+    });
+    const data = await res.json();
+    if (!data.ok) console.error("[ChatAPI] deleteSession error:", data.error);
+    return data.ok;
+  } catch (e) {
+    console.error("[ChatAPI] deleteSession error:", e);
+    return false;
+  }
+}
+
+async function updateMessageApi(messageId: string, content: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/chat/messages/${messageId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json();
+    return data.ok;
+  } catch {
+    return false;
+  }
+}
+
+function generateTitle(messages: Message[]): string {
+  const firstUserMsg = messages.find((m) => m.role === "user");
+  if (!firstUserMsg) return "新对话";
+  const text = firstUserMsg.content.trim();
+  return text.length > 40 ? text.slice(0, 40) + "..." : text;
 }
 
 export function CursorChatPanel({
@@ -38,30 +130,93 @@ export function CursorChatPanel({
   onModeChange: (mode: "agent" | "plan" | "ask") => void;
   cwd: string;
 }) {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatId, setChatId] = useState<string>("");
+  const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Load persisted chatId for this cwd (memory across reload).
+  // Load sessions from database on mount or cwd change
   useEffect(() => {
-    try {
-      const v = window.localStorage.getItem(storageKeyForCwd(cwd)) ?? "";
-      setChatId(typeof v === "string" ? v : "");
-    } catch {
-      setChatId("");
-    }
+    let cancelled = false;
+    fetchSessions(cwd).then((loaded) => {
+      if (cancelled) return;
+      setSessions(loaded);
+      // Open the most recent session by default
+      if (loaded.length > 0) {
+        const latest = loaded[0]; // Already sorted by updated_at DESC
+        setCurrentSessionId(latest.id);
+        setMessages(latest.messages);
+        setChatId(latest.id);
+      } else {
+        setCurrentSessionId("");
+        setMessages([]);
+        setChatId("");
+      }
+    });
+    return () => { cancelled = true; };
   }, [cwd]);
+
+  // Update current session in sessions list and persist to database
+  const updateCurrentSession = useCallback((newMessages: Message[]) => {
+    if (!currentSessionId) return;
+    const now = Date.now();
+    const newTitle = generateTitle(newMessages);
+    
+    setSessions((prev) => {
+      const updated = prev.map((s) =>
+        s.id === currentSessionId
+          ? { ...s, messages: newMessages, title: newTitle, updatedAt: now }
+          : s
+      );
+      // Persist to database (async, fire-and-forget)
+      const sessionToUpdate = updated.find((s) => s.id === currentSessionId);
+      if (sessionToUpdate) {
+        updateSessionApi(sessionToUpdate);
+      }
+      return updated;
+    });
+  }, [currentSessionId]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Sync messages to current session whenever they change (debounced)
+  useEffect(() => {
+    if (!currentSessionId || messages.length === 0) return;
+    const timer = setTimeout(() => {
+      updateCurrentSession(messages);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [messages, currentSessionId, updateCurrentSession]);
+
   const handleSend = async () => {
     if (!input.trim() || loading) return;
+
+    // Create new session if none exists
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      sessionId = randomId();
+      const newSession: ChatSession = {
+        id: sessionId,
+        cwd,
+        title: "新对话",
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setCurrentSessionId(sessionId);
+      setChatId(sessionId);
+      setSessions((prev) => [newSession, ...prev]);
+      // Persist to database
+      createSessionApi(newSession);
+    }
 
     // Add user message
     const userMsg: Message = {
@@ -77,7 +232,8 @@ export function CursorChatPanel({
       content: "",
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    const newMessages = [...messages, userMsg, assistantMsg];
+    setMessages(newMessages);
     setInput("");
     setLoading(true);
 
@@ -95,7 +251,7 @@ export function CursorChatPanel({
 
       if (!resp.ok) {
         // Try to parse JSON error body if present
-        let errText = `Request failed (${resp.status})`;
+        let errText = `请求失败 (${resp.status})`;
         try {
           const j = await resp.json();
           if (j?.error) errText = String(j.error);
@@ -103,7 +259,7 @@ export function CursorChatPanel({
         throw new Error(errText);
       }
       if (!resp.body) {
-        throw new Error("Missing response body (stream not supported)");
+        throw new Error("缺少响应体（不支持流式传输）");
       }
 
       const reader = resp.body.getReader();
@@ -132,9 +288,6 @@ export function CursorChatPanel({
           const sid = evt?.session_id;
           if (typeof sid === "string" && sid && sid !== chatId) {
             setChatId(sid);
-            try {
-              window.localStorage.setItem(storageKeyForCwd(cwd), sid);
-            } catch {}
           }
           return;
         }
@@ -150,18 +303,18 @@ export function CursorChatPanel({
             evt?.tool_call?.readToolCall?.args?.path ??
             evt?.tool_call?.editToolCall?.args?.path ??
             evt?.tool_call?.applyPatchToolCall?.args?.path;
-          if (typeof argsPath === "string" && argsPath) appendMetaLine(`[tool #${toolCount}] ${argsPath}`);
-          else appendMetaLine(`[tool #${toolCount}] started`);
+          if (typeof argsPath === "string" && argsPath) appendMetaLine(`[工具 #${toolCount}] ${argsPath}`);
+          else appendMetaLine(`[工具 #${toolCount}] 已启动`);
           return;
         }
         if (t === "stderr") {
           const msg = evt?.message;
-          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[stderr] ${msg.trim()}`);
+          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[标准错误] ${msg.trim()}`);
           return;
         }
         if (t === "error") {
           const msg = evt?.message;
-          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[error] ${msg.trim()}`);
+          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[错误] ${msg.trim()}`);
           return;
         }
         if (t === "result") {
@@ -169,7 +322,7 @@ export function CursorChatPanel({
           const exitCode = evt?.exitCode;
           const timedOut = evt?.timedOut;
           const sig = evt?.signal;
-          appendMetaLine(`[done] exit=${exitCode ?? "?"}${sig ? ` signal=${sig}` : ""}${timedOut ? " timedOut=true" : ""}`);
+          appendMetaLine(`[完成] 退出码=${exitCode ?? "?"}${sig ? ` 信号=${sig}` : ""}${timedOut ? " 超时=true" : ""}`);
           return;
         }
       };
@@ -204,7 +357,7 @@ export function CursorChatPanel({
     } catch (e: any) {
       setMessages((prev) =>
         updateMessageById(prev, assistantId, {
-          content: (prev.find((m) => m.id === assistantId)?.content || "") + `\nError: ${e?.message ?? String(e)}`,
+          content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n错误: ${e?.message ?? String(e)}`,
         }),
       );
     } finally {
@@ -214,18 +367,50 @@ export function CursorChatPanel({
   };
 
   const handleNewChat = () => {
-    // Clear remembered session for this cwd; next send starts a new conversation.
+    // Abort any in-flight request
     try {
       abortRef.current?.abort();
     } catch {}
     abortRef.current = null;
     setLoading(false);
+    
+    // Clear current session state - next send will create a new session
+    setCurrentSessionId("");
     setChatId("");
-    try {
-      window.localStorage.removeItem(storageKeyForCwd(cwd));
-    } catch {}
     setMessages([]);
     setInput("");
+    setShowHistory(false);
+  };
+
+  const handleSelectSession = (session: ChatSession) => {
+    // Abort any in-flight request
+    try {
+      abortRef.current?.abort();
+    } catch {}
+    abortRef.current = null;
+    setLoading(false);
+    
+    setCurrentSessionId(session.id);
+    setChatId(session.id);
+    setMessages(session.messages);
+    setShowHistory(false);
+  };
+
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    // Delete from database
+    await deleteSessionApi(sessionId);
+    
+    const newSessions = sessions.filter((s) => s.id !== sessionId);
+    setSessions(newSessions);
+    
+    // If deleting the current session, clear it
+    if (sessionId === currentSessionId) {
+      setCurrentSessionId("");
+      setChatId("");
+      setMessages([]);
+    }
   };
 
   const handleStop = () => {
@@ -250,22 +435,65 @@ export function CursorChatPanel({
           <option value="plan">Plan</option>
           <option value="ask">Ask</option>
         </select>
-        <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="Start a new conversation for this folder">
-          New chat
+        <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
+          新建
+        </button>
+        <button
+          className={"historyBtn" + (showHistory ? " historyBtnActive" : "")}
+          onClick={() => setShowHistory(!showHistory)}
+          disabled={loading}
+          title="查看聊天历史"
+        >
+          历史 ({sessions.length})
         </button>
         {loading && <span className="loadingIndicator">●</span>}
         {loading ? (
-          <button className="stopBtn" onClick={handleStop} title="Stop current request">
-            Stop
+          <button className="stopBtn" onClick={handleStop} title="停止当前请求">
+            停止
           </button>
         ) : null}
       </div>
 
+      {showHistory && (
+        <div className="chatHistoryPanel">
+          <div className="historyHeader">
+            <span>聊天历史</span>
+            <button className="closeHistoryBtn" onClick={() => setShowHistory(false)}>×</button>
+          </div>
+          <div className="historyList">
+            {sessions.length === 0 ? (
+              <div className="historyEmpty">暂无聊天历史</div>
+            ) : (
+              [...sessions].reverse().map((session) => (
+                <div
+                  key={session.id}
+                  className={"historyItem" + (session.id === currentSessionId ? " historyItemActive" : "")}
+                  onClick={() => handleSelectSession(session)}
+                >
+                  <div className="historyItemTitle">{session.title}</div>
+                  <div className="historyItemMeta">
+                    <span>{new Date(session.updatedAt).toLocaleDateString()}</span>
+                    <span>{session.messages.length} 条消息</span>
+                  </div>
+                  <button
+                    className="historyItemDelete"
+                    onClick={(e) => handleDeleteSession(session.id, e)}
+                    title="删除此对话"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="chatMessages">
         {messages.length === 0 && (
           <div className="emptyState">
-            <p>Start a conversation with Cursor {mode.charAt(0).toUpperCase() + mode.slice(1)}.</p>
-            <p className="hint">Type your question or task below. (Ctrl/Cmd + Enter to send)</p>
+            <p>与 Cursor {mode.charAt(0).toUpperCase() + mode.slice(1)} 开始对话。</p>
+            <p className="hint">在下方输入您的问题或任务。（Ctrl/Cmd + Enter 发送）</p>
           </div>
         )}
 
@@ -301,12 +529,12 @@ export function CursorChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={`Ask ${mode}... (Ctrl/Cmd+Enter to send)`}
+          placeholder={`向 ${mode} 提问...（Ctrl/Cmd+Enter 发送）`}
           disabled={loading}
           rows={3}
         />
         <button className="sendBtn" onClick={handleSend} disabled={loading || !input.trim()}>
-          Send
+          发送
         </button>
       </div>
     </div>

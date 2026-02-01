@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { execa, type ExecaChildProcess } from "execa";
+import { execa } from "execa";
 import type { Limits } from "./session.js";
 
 export type TermSend = (msg: any) => void;
@@ -12,7 +12,7 @@ type CodexSession = {
   lineBuf: string;
   queue: string[];
   running: boolean;
-  child?: ExecaChildProcess<string>;
+  child?: ReturnType<typeof execa>;
 };
 
 function randomId() {

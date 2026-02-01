@@ -1,9 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { loader } from "@monaco-editor/react";
+
+// Use unpkg CDN instead of jsdelivr (which may be blocked/slow in some regions)
+loader.config({
+  paths: {
+    vs: "https://unpkg.com/monaco-editor@0.52.0/min/vs",
+  },
+});
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import hljs from "highlight.js";
-import { apiList, apiRead, apiRoots, apiWrite, type FsEntry } from "../api";
+import { 
+  apiList, 
+  apiRead, 
+  apiRoots, 
+  apiWrite, 
+  apiGetWorkspaces,
+  apiCreateWorkspace,
+  apiSetActiveWorkspace,
+  apiDeleteWorkspace,
+  type FsEntry,
+  type Workspace,
+} from "../api";
 import { TermClient, type TermServerMsg } from "../wsTerm";
 import { CursorChatPanel } from "./CursorChatPanel";
 
@@ -134,13 +152,13 @@ function TreeView(props: {
             {node.type === "dir" ? (node.expanded ? "▾" : "▸") : " "}
           </span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</span>
-          {node.loading ? <span className="fileMeta">loading…</span> : null}
+          {node.loading ? <span className="fileMeta">加载中…</span> : null}
         </div>
 
         {node.type === "dir" ? (
           <div className="dirActions" onClick={(e) => e.stopPropagation()}>
-            <button className="dirTermBtn" onClick={() => props.onOpenTerminalDir(node)} title="Open terminal in this folder">
-              Term
+            <button className="dirTermBtn" onClick={() => props.onOpenTerminalDir(node)} title="在此文件夹打开终端">
+              终端
             </button>
           </div>
         ) : null}
@@ -161,7 +179,7 @@ function TreeView(props: {
           ))}
           {node.loading ? (
             <div className="fileMeta" style={{ paddingLeft: 8 + indent + 24, paddingTop: 4, paddingBottom: 6 }}>
-              loading…
+              加载中…
             </div>
           ) : null}
         </div>
@@ -185,6 +203,10 @@ export function App() {
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
 
+  // Workspace management
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
+
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activeFile, setActiveFile] = useState("");
   const [fileStateByPath, setFileStateByPath] = useState<
@@ -202,8 +224,8 @@ export function App() {
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
-  const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("restricted");
-  const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("restricted");
+  const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
+  const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
   const cursorModeRef = useRef<"agent" | "plan" | "ask">("agent");
   const [cursorCliMode, setCursorCliMode] = useState<"agent" | "plan" | "ask">("agent");
@@ -313,15 +335,146 @@ export function App() {
     apiRoots()
       .then((r) => {
         setRoots(r.roots);
-        setActiveRoot((prev) => prev || r.roots[0] || "");
+        // Try to restore last active root from localStorage
+        const saved = localStorage.getItem("web-ide:activeRoot");
+        const defaultRoot = saved && r.roots.includes(saved) ? saved : r.roots[0] || "";
+        setActiveRoot((prev) => prev || defaultRoot);
       })
-      .catch((e) => setStatus(`[error] roots: ${e?.message ?? String(e)}`));
+      .catch((e) => setStatus(`[错误] 根目录: ${e?.message ?? String(e)}`));
   }, []);
+
+  // Persist activeRoot to localStorage
+  useEffect(() => {
+    if (activeRoot) {
+      localStorage.setItem("web-ide:activeRoot", activeRoot);
+    }
+  }, [activeRoot]);
+
+  // Load workspaces from database on mount
+  useEffect(() => {
+    let cancelled = false;
+    apiGetWorkspaces()
+      .then((res) => {
+        if (cancelled) return;
+        setWorkspaces(res.workspaces);
+        if (res.activeId) {
+          setActiveWorkspaceId(res.activeId);
+          const ws = res.workspaces.find((w) => w.id === res.activeId);
+          if (ws) setTerminalCwd(ws.cwd);
+        } else if (res.workspaces.length > 0) {
+          // No active workspace set, use first one
+          setActiveWorkspaceId(res.workspaces[0].id);
+          setTerminalCwd(res.workspaces[0].cwd);
+          // Set it as active in DB
+          apiSetActiveWorkspace(res.workspaces[0].id).catch(() => {});
+        }
+      })
+      .catch((e) => {
+        console.error("[App] Failed to load workspaces:", e);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Workspace management functions
+  const addWorkspace = useCallback(async (cwd: string) => {
+    // Check if workspace already exists locally
+    const existing = workspaces.find((w) => w.cwd === cwd);
+    if (existing) {
+      setActiveWorkspaceId(existing.id);
+      setTerminalCwd(existing.cwd);
+      // Update active in DB
+      apiSetActiveWorkspace(existing.id).catch(() => {});
+      return;
+    }
+    
+    const newWorkspace = {
+      id: `ws_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      cwd,
+      name: baseName(cwd),
+      isActive: true,
+    };
+    
+    try {
+      const res = await apiCreateWorkspace(newWorkspace);
+      setWorkspaces((prev) => [...prev, res.workspace]);
+      setActiveWorkspaceId(res.workspace.id);
+      setTerminalCwd(cwd);
+    } catch (e) {
+      console.error("[App] Failed to create workspace:", e);
+      // Fallback: add locally anyway
+      setWorkspaces((prev) => [...prev, { ...newWorkspace, createdAt: Date.now() }]);
+      setActiveWorkspaceId(newWorkspace.id);
+      setTerminalCwd(cwd);
+    }
+  }, [workspaces]);
+
+  const removeWorkspace = useCallback(async (id: string) => {
+    // Optimistically update UI
+    setWorkspaces((prev) => {
+      const next = prev.filter((w) => w.id !== id);
+      // If removing active workspace, switch to another
+      if (id === activeWorkspaceId && next.length > 0) {
+        setActiveWorkspaceId(next[0].id);
+        setTerminalCwd(next[0].cwd);
+        // Update active in DB
+        apiSetActiveWorkspace(next[0].id).catch(() => {});
+      } else if (next.length === 0) {
+        setActiveWorkspaceId("");
+        // Keep terminalCwd as activeRoot when no workspaces
+      }
+      return next;
+    });
+    
+    // Delete from DB
+    try {
+      await apiDeleteWorkspace(id);
+    } catch (e) {
+      console.error("[App] Failed to delete workspace:", e);
+    }
+  }, [activeWorkspaceId]);
+
+  const switchWorkspace = useCallback(async (id: string) => {
+    const ws = workspaces.find((w) => w.id === id);
+    if (ws) {
+      setActiveWorkspaceId(id);
+      setTerminalCwd(ws.cwd);
+      // Update active in DB
+      try {
+        await apiSetActiveWorkspace(id);
+      } catch (e) {
+        console.error("[App] Failed to set active workspace:", e);
+      }
+    }
+  }, [workspaces]);
+
+  const initializedCwdRef = useRef(false);
 
   useEffect(() => {
     if (!activeRoot) return;
-    setTerminalCwd(activeRoot);
-  }, [activeRoot]);
+    // Only initialize terminalCwd if no workspaces loaded
+    if (!initializedCwdRef.current) {
+      initializedCwdRef.current = true;
+      // If workspaces already loaded, don't override
+      if (workspaces.length > 0) return;
+      const savedCwd = localStorage.getItem("web-ide:terminalCwd");
+      // Only use saved cwd if it starts with the active root (valid path)
+      if (savedCwd && savedCwd.startsWith(activeRoot)) {
+        setTerminalCwd(savedCwd);
+        return;
+      }
+    }
+    // Only set terminalCwd from activeRoot if no workspaces
+    if (workspaces.length === 0) {
+      setTerminalCwd(activeRoot);
+    }
+  }, [activeRoot, workspaces.length]);
+
+  // Persist terminalCwd to localStorage
+  useEffect(() => {
+    if (terminalCwd) {
+      localStorage.setItem("web-ide:terminalCwd", terminalCwd);
+    }
+  }, [terminalCwd]);
 
   useEffect(() => {
     if (!activeRoot) return;
@@ -339,7 +492,7 @@ export function App() {
         }));
         setTree((t) => (t ? { ...t, loading: false, loaded: true, children } : t));
       } catch (e: any) {
-        setStatus(`[error] list: ${e?.message ?? String(e)}`);
+        setStatus(`[错误] 列表: ${e?.message ?? String(e)}`);
         setTree((t) => (t ? { ...t, loading: false } : t));
       }
     })();
@@ -393,7 +546,7 @@ export function App() {
         [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
       }));
     } catch (e: any) {
-      setStatus(`[error] read: ${e?.message ?? String(e)}`);
+      setStatus(`[错误] 读取: ${e?.message ?? String(e)}`);
     }
   };
 
@@ -405,16 +558,16 @@ export function App() {
         ...prev,
         [activeFile]: { text: fileText, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
       }));
-      setStatus(`[ok] saved ${baseName(activeFile)}`);
+      setStatus(`[成功] 已保存 ${baseName(activeFile)}`);
     } catch (e: any) {
-      setStatus(`[error] write: ${e?.message ?? String(e)}`);
+      setStatus(`[错误] 写入: ${e?.message ?? String(e)}`);
     }
   };
 
   const closeTab = (path: string) => {
     const st = fileStateByPath[path];
     if (st?.dirty) {
-      const ok = window.confirm(`"${baseName(path)}" has unsaved changes. Close anyway?`);
+      const ok = window.confirm(`"${baseName(path)}" 有未保存的更改。仍要关闭吗？`);
       if (!ok) return;
     }
 
@@ -453,7 +606,8 @@ export function App() {
     if (termInitedRef.current) return;
     const el = termDivRef.current;
     if (!el) return;
-    if (el.clientWidth <= 0 || el.clientHeight <= 0) return;
+    // Don't check el.clientWidth/clientHeight here - terminal may be hidden initially (Cursor mode)
+    // The terminal will be properly sized when it becomes visible
 
     const term = new Terminal({
       fontFamily: "var(--mono)",
@@ -578,19 +732,24 @@ export function App() {
         }
       }
       if (m.t === "term.exit" && m.sessionId === termSessionIdRef.current) {
-        logTerm("term.exit", { sessionId: m.sessionId, code: m.code });
-        // Clear session so new keystrokes can be buffered for the next open.
-        termSessionIdRef.current = "";
-        cursorPromptNudgedRef.current = false;
-        // In PTY TUI modes, don't print a shell prompt, but do show exit for debugging.
+        logTerm("term.exit", { sessionId: m.sessionId, code: m.code, termMode: termModeRef.current });
+        // For PTY-based modes (codex, cursor, cursor-cli), term.exit means the whole session ended.
+        // For restricted mode, term.exit only means a single command finished — keep the session open.
         if (termModeRef.current === "codex") {
-          term.write(`\r\n[codex exited ${m.code ?? "?"}]\r\n`);
+          termSessionIdRef.current = "";
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[codex 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (termModeRef.current === "cursor") {
-          term.write(`\r\n[cursor exited ${m.code ?? "?"}]\r\n`);
+          termSessionIdRef.current = "";
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[cursor 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (termModeRef.current === "cursor-cli") {
-          term.write(`\r\n[cursor-cli exited ${m.code ?? "?"}]\r\n`);
+          termSessionIdRef.current = "";
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[cursor-cli 已退出 ${m.code ?? "?"}]\r\n`);
         } else {
-          term.write(`\r\n[exit ${m.code ?? "?"}]\r\n$ `);
+          // restricted mode: command finished, but session stays open for more commands
+          term.write(`$ `);
         }
       }
     };
@@ -603,7 +762,7 @@ export function App() {
         // Don't print a prompt here; prompts are managed per-session.
       })
       .catch((e) => {
-        term.write(`\r\n[ws error] ${e?.message ?? String(e)}\r\n`);
+        term.write(`\r\n[WebSocket 错误] ${e?.message ?? String(e)}\r\n`);
       });
 
     term.onData((data) => {
@@ -625,7 +784,7 @@ export function App() {
           termInputBufRef.current = "";
           term.write("\r\n");
           if (line === "codex") {
-            term.write("[starting codex…]\r\n");
+            term.write("[启动 codex…]\r\n");
             setTermMode("codex");
             return; // don't send to restricted backend
           }
@@ -642,9 +801,9 @@ export function App() {
       }
       void client.stdin(sid, data).catch((e) => {
         if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
-          term.write(`\r\n[error] ${e?.message ?? String(e)}\r\n`);
+          term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
         } else {
-          term.write(`\r\n[error] ${e?.message ?? String(e)}\r\n$ `);
+          term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
         }
       });
     });
@@ -730,7 +889,6 @@ export function App() {
 
     const openKey =
       `${terminalCwd}::${termMode}` +
-      (termMode === "cursor" ? `::${cursorMode}` : "") +
       (termMode === "cursor-cli" ? `::${cursorCliMode}` : "");
 
     // Only reopen if we don't already have the correct session open.
@@ -752,11 +910,12 @@ export function App() {
         }
         
         // Determine actual mode for WebSocket
-        let actualMode: "restricted" | "codex" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
+        // Map cursor-cli modes to the backend modes: agent, plan, ask
+        let actualMode: "restricted" | "native" | "codex" | "agent" | "plan" | "ask";
         if (termMode === "cursor-cli") {
-          actualMode = `cursor-cli-${cursorCliMode}` as any;
+          actualMode = cursorCliMode; // cursorCliMode is already "agent" | "plan" | "ask"
         } else {
-          actualMode = termMode as any;
+          actualMode = termMode; // termMode here is "restricted" | "codex"
         }
         logTerm("actualMode", { actualMode });
         
@@ -764,7 +923,7 @@ export function App() {
         if (termMode === "codex" || termMode === "cursor-cli") {
           term.reset();
         } else {
-          term.write(`\r\n[session] opening at ${terminalCwd}\r\n`);
+          term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
         }
 
         const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode);
@@ -782,13 +941,6 @@ export function App() {
         logTerm("resize after open", { sessionId: resp.sessionId, cols: term.cols, rows: term.rows });
         void client.resize(resp.sessionId, term.cols, term.rows).catch(() => {});
 
-        // For cursor modes, wait a bit for UI to render, then send a dummy input to keep the session alive
-        if (termMode === "cursor") {
-          await new Promise((r) => setTimeout(r, 1500));
-          // Send a single space to wake up the interactive prompt (will be visible but harmless)
-          await client.stdin(resp.sessionId, " ").catch(() => {});
-        }
-
         // Flush any keystrokes typed while the session was opening.
         const pending = termPendingStdinRef.current;
         if (pending) {
@@ -796,10 +948,10 @@ export function App() {
           await client.stdin(resp.sessionId, pending).catch(() => {});
         }
 
-        if (termMode !== "codex" && termMode !== "cursor" && termMode !== "cursor-cli") term.write("$ ");
+        if (termMode !== "codex" && termMode !== "cursor-cli") term.write("$ ");
       } catch (e: any) {
         lastOpenKeyRef.current = "";
-        setStatus(`[error] term: ${e?.message ?? String(e)}`);
+          setStatus(`[错误] 终端: ${e?.message ?? String(e)}`);
       }
     })();
   }, [terminalCwd, terminalVisible, termMode, cursorMode, cursorCliMode]);
@@ -807,7 +959,7 @@ export function App() {
   const ExplorerPanel = (
     <div className={"panel" + (isMobile && mobileTab !== "explorer" ? " hidden" : "")} style={{ flex: isMobile ? 1 : undefined }}>
       <div className="panelHeader">
-        <h2>Files</h2>
+        <h2>文件</h2>
       </div>
       <div className="panelBody">
         <div className="fileList">
@@ -819,12 +971,13 @@ export function App() {
               onToggleDir={toggleDir}
               onOpenFile={openFile}
               onOpenTerminalDir={(n) => {
-                setTerminalCwd(n.path);
+                // Auto create/switch workspace when clicking Term button
+                addWorkspace(n.path);
                 if (isMobile) setMobileTab("terminal");
               }}
             />
           ) : (
-            <div className="fileMeta">{ready ? "loading…" : "no roots"}</div>
+            <div className="fileMeta">{ready ? "加载中…" : "无根目录"}</div>
           )}
         </div>
       </div>
@@ -841,7 +994,7 @@ export function App() {
       }}
     >
       {openTabs.length ? (
-        <div className="tabStrip" role="tablist" aria-label="Open files">
+        <div className="tabStrip" role="tablist" aria-label="已打开文件">
           {openTabs.map((p) => {
             const isActive = p === activeFile;
             const isDirty = fileStateByPath[p]?.dirty;
@@ -868,7 +1021,7 @@ export function App() {
                     e.stopPropagation();
                     closeTab(p);
                   }}
-                  aria-label={`Close ${baseName(p)}`}
+                  aria-label={`关闭 ${baseName(p)}`}
                 >
                   ×
                 </button>
@@ -879,28 +1032,28 @@ export function App() {
       ) : null}
 
       <div className="panelHeader">
-        <h2>Editor</h2>
+        <h2>编辑器</h2>
         <div className="row" style={{ marginLeft: "auto" }}>
-          <div className="segmented" aria-label="Editor mode">
+          <div className="segmented" aria-label="编辑器模式">
             <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
-              Edit
+              编辑
             </button>
             <button
               className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
               onClick={() => setEditorMode("preview")}
               disabled={!activeFile}
-              title={!activeFile ? "Open a file first" : "Preview with highlight.js"}
+              title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
             >
-              Preview
+              预览
             </button>
           </div>
           <span className="fileMeta" title={activeFile}>
-            {activeFile ? baseName(activeFile) : "(no file)"}
+            {activeFile ? baseName(activeFile) : "(无文件)"}
             {dirty ? " *" : ""}
           </span>
           {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
           <button className="btn" onClick={save} disabled={!activeFile || !dirty}>
-            Save
+            保存
           </button>
         </div>
       </div>
@@ -945,8 +1098,35 @@ export function App() {
         minHeight: isMobile ? undefined : 0,
       }}
     >
+      {/* 工作区标签 */}
+      <div className="workspaceTabStrip">
+        {workspaces.length === 0 ? (
+          <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
+        ) : (
+          workspaces.map((ws) => (
+            <div
+              key={ws.id}
+              className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
+              onClick={() => switchWorkspace(ws.id)}
+              title={ws.cwd}
+            >
+              <span className="workspaceTabName">{ws.name}</span>
+              <button
+                className="workspaceTabClose"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeWorkspace(ws.id);
+                }}
+                title="关闭工作区"
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
+      </div>
       <div className="panelHeader">
-        <h2>Terminal</h2>
+        <h2>终端</h2>
         <span
           className="fileMeta"
           title={terminalCwd}
@@ -958,16 +1138,18 @@ export function App() {
             whiteSpace: "nowrap",
           }}
         >
-          {terminalCwd ? `cwd: ${terminalCwd}` : ""}
+          {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
         </span>
         <div className="row" style={{ marginLeft: "auto", gap: "8px", alignItems: "center" }}>
-          <div className="segmented" aria-label="Terminal mode">
-            <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
-              setTermMode("restricted");
-              termRef.current?.focus();
-              setTimeout(() => termRef.current?.focus(), 50);
-            }}>
-              Restricted
+          <div className="segmented" aria-label="终端模式">
+            <button
+              className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
+              onClick={() => {
+                setTermMode("cursor");
+              }}
+              title="Cursor AI（非交互模式）"
+            >
+              Cursor
             </button>
             <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
               setTermMode("codex");
@@ -976,20 +1158,18 @@ export function App() {
             }}>
               Codex
             </button>
-            <button
-              className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
-              onClick={() => {
-                setTermMode("cursor");
-              }}
-              title="Cursor AI (non-interactive mode)"
-            >
-              Cursor
+            <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
+              setTermMode("restricted");
+              termRef.current?.focus();
+              setTimeout(() => termRef.current?.focus(), 50);
+            }}>
+              受限
             </button>
           </div>
         </div>
       </div>
       
-      {/* Keep both views mounted; toggle visibility to avoid xterm losing its container */}
+      {/* 保持两个视图都挂载；切换可见性以避免 xterm 丢失容器 */}
       <div style={{ display: termMode === "cursor" ? "block" : "none", flex: 1, minHeight: 0 }}>
         <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
       </div>
@@ -1005,11 +1185,11 @@ export function App() {
 
   return (
     <>
-      {/* Desktop */}
+        {/* 桌面端 */}
       <div className="app">
         <div className="panel" style={{ width: isMobile ? "auto" : `${leftWidth}px`, minWidth: isMobile ? "auto" : "200px" }}>
           <div className="panelHeader">
-            <h2>Explorer</h2>
+            <h2>资源管理器</h2>
             <div className="row" style={{ marginLeft: "auto" }}>
               <select
                 className="select"
@@ -1023,7 +1203,7 @@ export function App() {
                   setEditorMode("edit");
                 }}
                 disabled={roots.length === 0}
-                title="roots"
+                title="根目录"
               >
                 {roots.map((r) => (
                   <option key={r} value={r}>
@@ -1043,31 +1223,32 @@ export function App() {
                   onToggleDir={toggleDir}
                   onOpenFile={openFile}
                   onOpenTerminalDir={(n) => {
-                    setTerminalCwd(n.path);
+                    // Auto create/switch workspace when clicking Term button
+                    addWorkspace(n.path);
                     if (isMobile) setMobileTab("terminal");
                   }}
                 />
               ) : (
-                <div className="fileMeta">{ready ? "loading…" : "no roots"}</div>
+                <div className="fileMeta">{ready ? "加载中…" : "无根目录"}</div>
               )}
             </div>
           </div>
         </div>
 
         {!isMobile && (
-          <div className="resizer" onMouseDown={() => setIsDragging(true)} title="Drag to resize" />
+          <div className="resizer" onMouseDown={() => setIsDragging(true)} title="拖拽调整大小" />
         )}
 
         <div className="right" style={{ flex: isMobile ? undefined : 1 }} ref={rightPanelRef}>
           {EditorPanel}
           {!isMobile && (
-            <div className="resizerVertical" onMouseDown={() => setIsDraggingVertical(true)} title="Drag to resize" />
+            <div className="resizerVertical" onMouseDown={() => setIsDraggingVertical(true)} title="拖拽调整大小" />
           )}
           {TerminalPanel}
         </div>
       </div>
 
-      {/* Mobile */}
+      {/* 移动端 */}
       {isMobile ? (
         <div className="appMobile">
           <div className="topbar">
@@ -1083,7 +1264,7 @@ export function App() {
                 setEditorMode("edit");
               }}
               disabled={roots.length === 0}
-              title="roots"
+              title="根目录"
               style={{ flex: 1, minWidth: 0 }}
             >
               {roots.map((r) => (
@@ -1095,13 +1276,13 @@ export function App() {
 
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
-                Files
+                文件
               </button>
               <button className={"tabBtn" + (mobileTab === "editor" ? " tabBtnActive" : "")} onClick={() => setMobileTab("editor")}>
-                Editor
+                编辑器
               </button>
               <button className={"tabBtn" + (mobileTab === "terminal" ? " tabBtnActive" : "")} onClick={() => setMobileTab("terminal")}>
-                Terminal
+                终端
               </button>
             </div>
           </div>

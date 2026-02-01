@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { execa } from "execa";
 
@@ -62,7 +62,7 @@ export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" 
   try {
     const result = await execa(agentBin, args, {
       cwd,
-      timeout: 60000, // 60 seconds (reduced from 5 minutes for faster feedback)
+      timeout: 300000, // 5 minutes - cursor agent tools can take a while
       env: {
         ...baseEnv,
         PATH: spawnPath,
@@ -86,8 +86,8 @@ export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" 
     // Handle timeout
     if (error.timedOut) {
       throw new Error(
-        "Cursor Agent timed out after 60s. This often means authentication is required. " +
-        "Please run 'agent login' in your terminal first."
+        "Cursor Agent timed out after 5 minutes. This could mean the task is too complex, " +
+        "or authentication is required. Please run 'agent login' in your terminal first."
       );
     }
 
@@ -102,7 +102,7 @@ export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" 
   }
 }
 
-function killProcessTree(child: ChildProcessWithoutNullStreams) {
+function killProcessTree(child: ChildProcess) {
   // Best-effort: kill process group (detached) first; fall back to direct kill.
   const pid = child.pid;
   if (!pid) return;
@@ -135,7 +135,7 @@ export type SpawnCursorAgentStreamOpts = {
  * The CLI prints one JSON object per line; we forward lines as-is (NDJSON).
  */
 export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): Promise<{
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcess;
   stop: () => void;
 }> {
   const agentBin = await resolveAgentBin();
@@ -167,14 +167,26 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
   const stop = () => killProcessTree(child);
 
   let timedOut = false;
-  const timeoutMs = Math.max(1, opts.timeoutMs ?? 60000);
-  const timer = setTimeout(() => {
+  // Inactivity timeout: kill only if no output for this duration.
+  // Default 5 minutes of inactivity (not total runtime).
+  const inactivityTimeoutMs = Math.max(1, opts.timeoutMs ?? 300000);
+  let timer = setTimeout(() => {
     timedOut = true;
     stop();
-  }, timeoutMs);
+  }, inactivityTimeoutMs);
+
+  // Reset inactivity timer whenever we receive output
+  const resetTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      stop();
+    }, inactivityTimeoutMs);
+  };
 
   const rlOut = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
   rlOut.on("line", (line) => {
+    resetTimer(); // Activity detected, reset timeout
     try {
       opts.onStdoutLine(line);
     } catch {}
@@ -182,6 +194,7 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
 
   const rlErr = readline.createInterface({ input: child.stderr, crlfDelay: Infinity });
   rlErr.on("line", (line) => {
+    resetTimer(); // Activity detected, reset timeout
     try {
       opts.onStderrLine?.(line);
     } catch {}

@@ -38,3 +38,44 @@ export async function apiWrite(path: string, text: string) {
   );
 }
 
+// Workspace types and APIs
+export type Workspace = {
+  id: string;
+  cwd: string;
+  name: string;
+  isActive: boolean;
+  createdAt: number;
+};
+
+export async function apiGetWorkspaces() {
+  return j<{ ok: true; workspaces: Workspace[]; activeId: string | null }>(
+    await fetch("/api/workspaces")
+  );
+}
+
+export async function apiCreateWorkspace(workspace: { id: string; cwd: string; name: string; isActive?: boolean }) {
+  return j<{ ok: true; workspace: Workspace }>(
+    await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(workspace),
+    })
+  );
+}
+
+export async function apiSetActiveWorkspace(id: string) {
+  return j<{ ok: true }>(
+    await fetch(`/api/workspaces/${id}/active`, {
+      method: "PUT",
+    })
+  );
+}
+
+export async function apiDeleteWorkspace(id: string) {
+  return j<{ ok: true }>(
+    await fetch(`/api/workspaces/${id}`, {
+      method: "DELETE",
+    })
+  );
+}
+
