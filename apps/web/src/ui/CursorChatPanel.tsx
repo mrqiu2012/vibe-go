@@ -140,8 +140,15 @@ export function CursorChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Load sessions from database on mount or cwd change
+  // Load sessions from database on mount or cwd change (skip when cwd not yet set)
   useEffect(() => {
+    if (!cwd) {
+      setSessions([]);
+      setCurrentSessionId("");
+      setMessages([]);
+      setChatId("");
+      return;
+    }
     let cancelled = false;
     fetchSessions(cwd).then((loaded) => {
       if (cancelled) return;

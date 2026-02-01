@@ -85,6 +85,12 @@ function initSchema(db: Database.Database) {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS editor_state (
+      root TEXT PRIMARY KEY,
+      file_path TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON chat_sessions(cwd);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
   `);
@@ -334,6 +340,25 @@ export function getWorkspaceByCwd(cwd: string): Workspace | null {
     ...row,
     isActive: row.isActive === 1,
   };
+}
+
+// ==================== Editor state (last opened file per root) ====================
+
+export function getLastOpenedFile(root: string): string | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT file_path FROM editor_state WHERE root = ?
+  `).get(root) as { file_path: string } | undefined;
+  return row?.file_path ?? null;
+}
+
+export function setLastOpenedFile(root: string, filePath: string): void {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO editor_state (root, file_path, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(root) DO UPDATE SET file_path = excluded.file_path, updated_at = excluded.updated_at
+  `).run(root, filePath, now);
 }
 
 // Cleanup on process exit

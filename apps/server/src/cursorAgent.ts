@@ -49,7 +49,7 @@ function makeCleanEnv() {
 
 export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" | "ask", cwd: string) {
   const agentBin = await resolveAgentBin();
-  const args = ["-p", prompt, "--output-format", "json"];
+  const args = ["-p", prompt, "--output-format", "json", "--model=auto"];
 
   if (mode === "plan") args.push("--mode=plan");
   if (mode === "ask") args.push("--mode=ask");
@@ -139,7 +139,7 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
   stop: () => void;
 }> {
   const agentBin = await resolveAgentBin();
-  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--stream-partial-output"];
+  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--stream-partial-output", "--model=auto"];
   if (opts.resume && opts.resume.trim()) args.push(`--resume=${opts.resume.trim()}`);
   if (opts.force) args.push("--force");
   if (opts.mode === "plan") args.push("--mode=plan");

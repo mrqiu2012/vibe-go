@@ -79,3 +79,20 @@ export async function apiDeleteWorkspace(id: string) {
   );
 }
 
+// Editor last opened file
+export async function apiGetLastOpenedFile(root: string) {
+  return j<{ ok: true; filePath: string | null }>(
+    await fetch(`/api/editor/last?root=${encodeURIComponent(root)}`)
+  );
+}
+
+export async function apiSetLastOpenedFile(root: string, filePath: string) {
+  return j<{ ok: true }>(
+    await fetch("/api/editor/last", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, filePath }),
+    })
+  );
+}
+

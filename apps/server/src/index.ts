@@ -24,6 +24,8 @@ import {
   setActiveWorkspace,
   deleteWorkspace,
   getWorkspaceByCwd,
+  getLastOpenedFile,
+  setLastOpenedFile,
   type ChatSession,
   type Message,
   type Workspace,
@@ -423,6 +425,37 @@ async function main() {
   });
 
   // ==================== End Workspace APIs ====================
+
+  // ==================== Editor state APIs (last opened file per root) ====================
+
+  app.get("/api/editor/last", (req, res) => {
+    try {
+      const root = String(req.query.root ?? "");
+      if (!root) {
+        return res.status(400).json({ ok: false, error: "Missing root parameter" });
+      }
+      const filePath = getLastOpenedFile(root);
+      res.json({ ok: true, filePath });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/editor/last", (req, res) => {
+    try {
+      const { root, filePath } = req.body;
+      if (!root || !filePath) {
+        return res.status(400).json({ ok: false, error: "Missing root or filePath" });
+      }
+      validatePathInRoots(filePath, roots);
+      setLastOpenedFile(root, filePath);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  // ==================== End Editor state APIs ====================
 
   // Serve built web if exists (after `pnpm --filter @web-ide/web build`)
   const webDist = path.join(repoRoot, "apps", "web", "dist");

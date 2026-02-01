@@ -19,6 +19,8 @@ import {
   apiCreateWorkspace,
   apiSetActiveWorkspace,
   apiDeleteWorkspace,
+  apiGetLastOpenedFile,
+  apiSetLastOpenedFile,
   type FsEntry,
   type Workspace,
 } from "../api";
@@ -135,6 +137,24 @@ function TreeView(props: {
   const { node, depth, activeFile } = props;
   const indent = depth * 12;
   const isActive = node.type === "file" && node.path === activeFile;
+  const [copyOpen, setCopyOpen] = useState(false);
+  const copyMenuRef = useRef<HTMLDivElement>(null);
+
+  const copyToClipboard = useCallback((text: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => setCopyOpen(false),
+      () => setCopyOpen(false),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!copyOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (copyMenuRef.current && !copyMenuRef.current.contains(e.target as Node)) setCopyOpen(false);
+    };
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, [copyOpen]);
 
   return (
     <div>
@@ -155,13 +175,30 @@ function TreeView(props: {
           {node.loading ? <span className="fileMeta">加载中…</span> : null}
         </div>
 
-        {node.type === "dir" ? (
-          <div className="dirActions" onClick={(e) => e.stopPropagation()}>
+        <div className="dirActions" onClick={(e) => e.stopPropagation()}>
+          <div className="copyPathWrap" ref={copyMenuRef}>
+            <button
+              type="button"
+              className="copyPathBtn"
+              onClick={() => setCopyOpen((o) => !o)}
+              title="复制文件名或路径"
+              aria-label="复制"
+            >
+              ⎘
+            </button>
+            {copyOpen ? (
+              <div className="copyPathMenu">
+                <button type="button" onClick={() => copyToClipboard(node.name)}>复制文件名</button>
+                <button type="button" onClick={() => copyToClipboard(node.path)}>复制路径</button>
+              </div>
+            ) : null}
+          </div>
+          {node.type === "dir" ? (
             <button className="dirTermBtn" onClick={() => props.onOpenTerminalDir(node)} title="在此文件夹打开终端">
               终端
             </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
       {node.type === "dir" && node.expanded ? (
@@ -190,7 +227,7 @@ function TreeView(props: {
 
 export function App() {
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileTab, setMobileTab] = useState<"explorer" | "editor" | "terminal">("editor");
+  const [mobileTab, setMobileTab] = useState<"explorer" | "editor" | "terminal">("terminal");
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
@@ -223,7 +260,10 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
+  const termSessionModeRef = useRef<"restricted" | "codex" | "agent" | "plan" | "ask" | "native" | "">("");
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
+  // Buffer term.data that arrives before term.open.resp (sessionId not set yet) so we don't drop initial output
+  const termPendingDataBufferRef = useRef<Map<string, string[]>>(new Map());
   const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
   const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
@@ -498,6 +538,30 @@ export function App() {
     })();
   }, [activeRoot]);
 
+  // Restore last opened file from SQLite when activeRoot changes
+  useEffect(() => {
+    if (!activeRoot) return;
+    let cancelled = false;
+    apiGetLastOpenedFile(activeRoot)
+      .then((res) => {
+        if (cancelled || !res.filePath) return;
+        const path = res.filePath;
+        if (!path.startsWith(activeRoot)) return;
+        return apiRead(path).then((r) => {
+          if (cancelled) return;
+          setOpenTabs((prev) => (prev.includes(r.path) ? prev : [r.path]));
+          setActiveFile(r.path);
+          setFileStateByPath((prev) => ({
+            ...prev,
+            [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
+          }));
+          setEditorMode("edit");
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeRoot]);
+
   const toggleDir = async (node: TreeNode) => {
     // Collapse
     if (node.expanded) {
@@ -545,6 +609,7 @@ export function App() {
         ...prev,
         [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
       }));
+      if (activeRoot) apiSetLastOpenedFile(activeRoot, r.path).catch(() => {});
     } catch (e: any) {
       setStatus(`[错误] 读取: ${e?.message ?? String(e)}`);
     }
@@ -712,39 +777,45 @@ export function App() {
     } catch {}
 
     client.onMsg = (m: TermServerMsg) => {
-      if (m.t === "term.data" && m.sessionId === termSessionIdRef.current) {
-        term.write(m.data);
-        logTerm("term.data", { sessionId: m.sessionId, bytes: m.data.length, head: m.data.slice(0, 24) });
-        // Cursor Agent interactive UI sometimes only renders after an initial keypress/resize.
-        // Nudge once after the banner appears (works for both cursor PTY and cursor-cli PTY).
-        if ((termModeRef.current === "cursor" || termModeRef.current === "cursor-cli") && !cursorPromptNudgedRef.current) {
-          if (m.data.includes("Cursor Agent")) {
-            cursorPromptNudgedRef.current = true;
-            const sid = termSessionIdRef.current;
-            if (sid) {
-              logTerm("nudge prompt: sending Enter", { sessionId: sid, termMode: termModeRef.current });
-              setTimeout(() => {
-                void client.stdin(sid, "\r").catch(() => {});
-                void client.resize(sid, term.cols, term.rows).catch(() => {});
-              }, 200);
+      if (m.t === "term.data") {
+        const sid = m.sessionId;
+        if (sid === termSessionIdRef.current) {
+          term.write(m.data);
+          logTerm("term.data", { sessionId: sid, bytes: m.data.length, head: m.data.slice(0, 24) });
+          // Cursor Agent TUI sometimes only renders after resize. Nudge with resize only (Enter + resize
+          // can cause full redraw and duplicate output in terminal).
+          if ((termModeRef.current === "cursor" || termModeRef.current === "cursor-cli") && !cursorPromptNudgedRef.current) {
+            if (m.data.includes("Cursor Agent")) {
+              cursorPromptNudgedRef.current = true;
+              const s = termSessionIdRef.current;
+              if (s) {
+                logTerm("nudge prompt: sending resize only", { sessionId: s, termMode: termModeRef.current });
+                setTimeout(() => void client.resize(s, term.cols, term.rows).catch(() => {}), 200);
+              }
             }
+          }
+        } else {
+          // Only buffer for Codex: server sends welcome before open.resp. For Cursor CLI we don't buffer,
+          // so we never flush cursor output — avoids duplicate when nudge triggers TUI redraw.
+          if (termModeRef.current === "codex") {
+            if (!termPendingDataBufferRef.current.has(sid)) termPendingDataBufferRef.current.set(sid, []);
+            termPendingDataBufferRef.current.get(sid)!.push(m.data);
           }
         }
       }
       if (m.t === "term.exit" && m.sessionId === termSessionIdRef.current) {
-        logTerm("term.exit", { sessionId: m.sessionId, code: m.code, termMode: termModeRef.current });
+        const sessionMode = termSessionModeRef.current;
+        logTerm("term.exit", { sessionId: m.sessionId, code: m.code, termMode: sessionMode || termModeRef.current });
         // For PTY-based modes (codex, cursor, cursor-cli), term.exit means the whole session ended.
         // For restricted mode, term.exit only means a single command finished — keep the session open.
-        if (termModeRef.current === "codex") {
+        if (sessionMode === "codex") {
           termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[codex 已退出 ${m.code ?? "?"}]\r\n`);
-        } else if (termModeRef.current === "cursor") {
+        } else if (sessionMode === "agent" || sessionMode === "plan" || sessionMode === "ask") {
           termSessionIdRef.current = "";
-          cursorPromptNudgedRef.current = false;
-          term.write(`\r\n[cursor 已退出 ${m.code ?? "?"}]\r\n`);
-        } else if (termModeRef.current === "cursor-cli") {
-          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[cursor-cli 已退出 ${m.code ?? "?"}]\r\n`);
         } else {
@@ -826,16 +897,27 @@ export function App() {
 
   // When switching back from Cursor (chat) to terminal, the xterm container may have been hidden.
   // Trigger a fit + backend resize so the terminal renders correctly.
+  // On mobile, panel was hidden (display:none) so layout is delayed; use delayed fit.
   useEffect(() => {
     if (!terminalVisible) return;
     if (termMode === "cursor") return;
-    requestAnimationFrame(() => requestAnimationFrame(() => safeFitTerm()));
-    const sid = termSessionIdRef.current;
-    const term = termRef.current;
-    const client = termClientRef.current;
-    if (sid && term && client) {
-      void client.resize(sid, term.cols, term.rows).catch(() => {});
-    }
+    const runFit = () => {
+      safeFitTerm();
+      const sid = termSessionIdRef.current;
+      const term = termRef.current;
+      const client = termClientRef.current;
+      if (sid && term && client) {
+        void client.resize(sid, term.cols, term.rows).catch(() => {});
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(runFit));
+    // Mobile: panel was .hidden so container had 0 size; delay fit until layout settles
+    const t1 = setTimeout(runFit, 150);
+    const t2 = setTimeout(runFit, 400);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [terminalVisible, termMode, safeFitTerm]);
 
   // Terminal cleanup (unmount only)
@@ -874,18 +956,7 @@ export function App() {
     // Cursor (chat panel) is NOT a terminal backend mode.
     // Do not open a WS term session; close any existing one to avoid confusing errors like:
     // "[error] term: Unknown mode: cursor"
-    if (termMode === "cursor") {
-      (async () => {
-        const old = termSessionIdRef.current;
-        if (old) {
-          termSessionIdRef.current = "";
-          lastOpenKeyRef.current = "";
-          cursorPromptNudgedRef.current = false;
-          await client.closeSession(old).catch(() => {});
-        }
-      })();
-      return;
-    }
+    if (termMode === "cursor") return;
 
     const openKey =
       `${terminalCwd}::${termMode}` +
@@ -904,6 +975,7 @@ export function App() {
         if (termSessionIdRef.current) {
           const old = termSessionIdRef.current;
           termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
           lastOpenKeyRef.current = "";
           logTerm("closing previous session", { old });
           await client.closeSession(old).catch(() => {});
@@ -929,8 +1001,16 @@ export function App() {
         const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode);
         if (!resp.ok || !resp.sessionId) throw new Error(resp.error ?? "term.open failed");
         termSessionIdRef.current = resp.sessionId;
+        termSessionModeRef.current = actualMode;
         lastOpenKeyRef.current = openKey;
         cursorPromptNudgedRef.current = false;
+        // Flush any term.data that arrived before term.open.resp (e.g. Codex welcome / PTY hint)
+        const buf = termPendingDataBufferRef.current.get(resp.sessionId);
+        if (buf?.length) {
+          for (const d of buf) term.write(d);
+          termPendingDataBufferRef.current.delete(resp.sessionId);
+        }
+        termPendingDataBufferRef.current.clear();
         logTerm("open session ok", { sessionId: resp.sessionId, cwd: resp.cwd, mode: resp.mode });
         // After session opens, force focus back to xterm.
         // This helps when the mode button/dropdown stole focus.
@@ -1006,9 +1086,15 @@ export function App() {
                 aria-selected={isActive}
                 tabIndex={0}
                 title={p}
-                onClick={() => setActiveFile(p)}
+                onClick={() => {
+                  setActiveFile(p);
+                  if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") setActiveFile(p);
+                  if (e.key === "Enter") {
+                    setActiveFile(p);
+                    if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                  }
                 }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1095,7 +1181,7 @@ export function App() {
       style={{
         flex: isMobile ? 1 : undefined,
         height: isMobile ? undefined : `${topHeight}%`,
-        minHeight: isMobile ? undefined : 0,
+        minHeight: isMobile ? 0 : undefined,
       }}
     >
       {/* 工作区标签 */}
@@ -1125,22 +1211,9 @@ export function App() {
           ))
         )}
       </div>
-      <div className="panelHeader">
-        <h2>终端</h2>
-        <span
-          className="fileMeta"
-          title={terminalCwd}
-          style={{
-            marginLeft: 8,
-            maxWidth: 520,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
-        </span>
-        <div className="row" style={{ marginLeft: "auto", gap: "8px", alignItems: "center" }}>
+      <div className="panelHeader termPanelHeader">
+        <div className="termPanelHeaderRow">
+          <h2>终端</h2>
           <div className="segmented" aria-label="终端模式">
             <button
               className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
@@ -1163,9 +1236,12 @@ export function App() {
               termRef.current?.focus();
               setTimeout(() => termRef.current?.focus(), 50);
             }}>
-              受限
+              Restricted
             </button>
           </div>
+        </div>
+        <div className="termPanelHeaderCwd" title={terminalCwd}>
+          {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
         </div>
       </div>
       
@@ -1176,7 +1252,11 @@ export function App() {
       <div
         className="term"
         ref={termDivRef}
-        style={{ display: termMode === "cursor" ? "none" : "block" }}
+        style={{
+          display: termMode === "cursor" ? "none" : "block",
+          flex: termMode === "cursor" ? undefined : 1,
+          minHeight: termMode === "cursor" ? undefined : 0,
+        }}
         onMouseDown={() => termRef.current?.focus()}
         onTouchStart={() => termRef.current?.focus()}
       />
@@ -1317,4 +1397,3 @@ export function App() {
     </>
   );
 }
-

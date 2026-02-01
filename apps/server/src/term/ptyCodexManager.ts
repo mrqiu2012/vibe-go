@@ -132,6 +132,13 @@ export class PtyCodexManager {
     const s: CodexPtySession = { id: sessionId, cwd: realCwd, cols, rows, pty: term };
     this.sessions.set(sessionId, s);
 
+    // Send initial hint so user sees something immediately (codex may be slow to first output over network).
+    this.opts.send({
+      t: "term.data",
+      sessionId,
+      data: `[codex] PTY 已启动，等待 codex 输出…\r\n`,
+    });
+
     term.onData((chunk: string) => this.opts.send({ t: "term.data", sessionId, data: chunk }));
     term.onExit((e: any) => {
       this.sessions.delete(sessionId);
