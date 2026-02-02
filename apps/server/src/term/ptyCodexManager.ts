@@ -112,7 +112,8 @@ export class PtyCodexManager {
       }
     })();
     const cmd = codexReal.endsWith(".js") || codexReal.endsWith(".cjs") ? process.execPath : codexBin;
-    const args = cmd === process.execPath ? [codexReal] : [];
+    // --no-alt-screen: avoid alternate screen mode so the TUI works reliably in an embedded PTY (e.g. web terminal).
+    const args = cmd === process.execPath ? [codexReal, "--no-alt-screen"] : ["--no-alt-screen"];
 
     const spawnPath = [path.dirname(codexBin), path.dirname(process.execPath), process.env.PATH ?? ""].filter(Boolean).join(path.delimiter);
 

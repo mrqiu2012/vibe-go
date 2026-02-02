@@ -231,8 +231,13 @@ export function App() {
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
-  const [topHeight, setTopHeight] = useState(60); // Terminal 高度百分比（用于交换 Editor/Terminal 高度）
+  const [topHeight, setTopHeight] = useState(50); // 终端/会话区域高度百分比，与编辑器区域各占一半（保持一致）
   const [isDraggingVertical, setIsDraggingVertical] = useState(false);
+
+  // PC 端三块区域折叠状态（仅桌面端生效）
+  const [panelExplorerCollapsed, setPanelExplorerCollapsed] = useState(false);
+  const [panelEditorCollapsed, setPanelEditorCollapsed] = useState(true); // 编辑器默认折叠
+  const [panelTerminalCollapsed, setPanelTerminalCollapsed] = useState(false);
 
   const [roots, setRoots] = useState<string[]>([]);
   const [activeRoot, setActiveRoot] = useState("");
@@ -275,13 +280,13 @@ export function App() {
   const cursorPromptNudgedRef = useRef(false);
   const termInitedRef = useRef(false);
 
-  const logTerm = (...args: any[]) => {
-    // Enable for debugging CLI-Agent
-    // eslint-disable-next-line no-console
-    console.log("[AppTerm]", ...args);
-  };
+  const logTerm = (..._args: any[]) => {};
   const termResizeObsRef = useRef<ResizeObserver | null>(null);
   const termInputBufRef = useRef<string>("");
+
+  const [pasteModalOpen, setPasteModalOpen] = useState(false);
+  const [pasteModalText, setPasteModalText] = useState("");
+  const pasteModalTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const terminalVisible = !isMobile || mobileTab === "terminal";
 
@@ -359,11 +364,26 @@ export function App() {
     const fit = fitRef.current;
     const term = termRef.current;
     if (!el || !fit || !term) return;
-    if (el.clientWidth <= 0 || el.clientHeight <= 0) return;
-    // Avoid a known xterm 5.3.x edge where renderer isn't ready yet.
+    // Force reflow so hidden→visible container has up-to-date dimensions (e.g. after Cursor→Codex)
+    void el.offsetHeight;
+    if (el.clientWidth <= 0 || el.clientHeight <= 0) {
+      try {
+        fit.fit();
+      } catch {
+        // ignore; will retry on next delayed fit
+      }
+      return;
+    }
     const core = (term as any)?._core;
     const dims = core?._renderService?._renderer?.dimensions;
-    if (!dims) return;
+    if (!dims) {
+      try {
+        fit.fit();
+      } catch {
+        // ignore
+      }
+      return;
+    }
     try {
       fit.fit();
     } catch {
@@ -409,9 +429,7 @@ export function App() {
           apiSetActiveWorkspace(res.workspaces[0].id).catch(() => {});
         }
       })
-      .catch((e) => {
-        console.error("[App] Failed to load workspaces:", e);
-      });
+      .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -439,8 +457,7 @@ export function App() {
       setWorkspaces((prev) => [...prev, res.workspace]);
       setActiveWorkspaceId(res.workspace.id);
       setTerminalCwd(cwd);
-    } catch (e) {
-      console.error("[App] Failed to create workspace:", e);
+    } catch {
       // Fallback: add locally anyway
       setWorkspaces((prev) => [...prev, { ...newWorkspace, createdAt: Date.now() }]);
       setActiveWorkspaceId(newWorkspace.id);
@@ -468,9 +485,7 @@ export function App() {
     // Delete from DB
     try {
       await apiDeleteWorkspace(id);
-    } catch (e) {
-      console.error("[App] Failed to delete workspace:", e);
-    }
+    } catch {}
   }, [activeWorkspaceId]);
 
   const switchWorkspace = useCallback(async (id: string) => {
@@ -481,9 +496,7 @@ export function App() {
       // Update active in DB
       try {
         await apiSetActiveWorkspace(id);
-      } catch (e) {
-        console.error("[App] Failed to set active workspace:", e);
-      }
+      } catch {}
     }
   }, [workspaces]);
 
@@ -665,14 +678,14 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFile, fileText]);
 
-  // Terminal init
+  // Terminal init: only when a mode that shows the terminal (Codex/Restricted/cursor-cli).
+  // In Cursor mode we don't create the terminal so xterm is never opened in a 0x0 hidden container.
   useEffect(() => {
     if (!terminalVisible) return;
+    if (termMode === "cursor") return;
     if (termInitedRef.current) return;
     const el = termDivRef.current;
     if (!el) return;
-    // Don't check el.clientWidth/clientHeight here - terminal may be hidden initially (Cursor mode)
-    // The terminal will be properly sized when it becomes visible
 
     const term = new Terminal({
       fontFamily: "var(--mono)",
@@ -690,8 +703,14 @@ export function App() {
     term.loadAddon(fit);
     term.open(el);
     termInitedRef.current = true;
-    // Defer initial fit until layout is ready.
-    requestAnimationFrame(() => requestAnimationFrame(() => safeFitTerm()));
+    // Container is visible (Codex/Restricted/cursor-cli); fit after layout.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        safeFitTerm();
+        // Extra fit after a short delay so xterm renderer is ready
+        setTimeout(safeFitTerm, 50);
+      });
+    });
     term.focus();
 
     termRef.current = term;
@@ -893,30 +912,41 @@ export function App() {
       // Intentionally do NOT dispose on tab switches; only mark disposed for connect() continuation.
       disposed = true;
     };
-  }, [safeFitTerm, terminalVisible]);
+  }, [safeFitTerm, terminalVisible, termMode]);
 
-  // When switching back from Cursor (chat) to terminal, the xterm container may have been hidden.
-  // Trigger a fit + backend resize so the terminal renders correctly.
-  // On mobile, panel was hidden (display:none) so layout is delayed; use delayed fit.
+  // When switching to Codex/Restricted (including Cursor→Codex again), the xterm container may have been hidden.
+  // Trigger fit + backend resize; multiple delayed fits so layout and renderer are ready.
   useEffect(() => {
     if (!terminalVisible) return;
     if (termMode === "cursor") return;
     const runFit = () => {
+      const el = termDivRef.current;
+      if (el) void el.offsetHeight; // force reflow before fit
       safeFitTerm();
       const sid = termSessionIdRef.current;
       const term = termRef.current;
       const client = termClientRef.current;
+      if (term && term.rows > 0) {
+        try {
+          term.refresh(0, term.rows - 1);
+        } catch {}
+      }
       if (sid && term && client) {
         void client.resize(sid, term.cols, term.rows).catch(() => {});
       }
     };
     requestAnimationFrame(() => requestAnimationFrame(runFit));
-    // Mobile: panel was .hidden so container had 0 size; delay fit until layout settles
     const t1 = setTimeout(runFit, 150);
     const t2 = setTimeout(runFit, 400);
+    const t3 = setTimeout(runFit, 700);
+    const t4 = setTimeout(runFit, 1200);
+    const t5 = setTimeout(runFit, 1800);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
     };
   }, [terminalVisible, termMode, safeFitTerm]);
 
@@ -1064,13 +1094,23 @@ export function App() {
     </div>
   );
 
-  const EditorPanel = (
+  const EditorPanel = ({
+    collapsed,
+    onToggleCollapse,
+  }: {
+    collapsed?: boolean;
+    onToggleCollapse?: () => void;
+  } = {}) => (
     <div
-      className={"panel" + (isMobile && mobileTab !== "editor" ? " hidden" : "")}
+      className={
+        "panel" +
+        (isMobile && mobileTab !== "editor" ? " hidden" : "") +
+        (!isMobile && collapsed ? " panelCollapsed panelVerticalCollapsed" : "")
+      }
       style={{
-        flex: isMobile ? 1 : undefined,
-        height: isMobile ? undefined : `${100 - topHeight}%`,
-        minHeight: isMobile ? undefined : 0,
+        flex: isMobile ? 1 : collapsed ? undefined : 1,
+        height: isMobile ? undefined : collapsed ? undefined : `${100 - topHeight}%`,
+        minHeight: isMobile ? undefined : collapsed ? undefined : 0,
       }}
     >
       {openTabs.length ? (
@@ -1118,6 +1158,16 @@ export function App() {
       ) : null}
 
       <div className="panelHeader">
+        {onToggleCollapse && (
+          <button
+            type="button"
+            className="panelCollapseBtn"
+            onClick={onToggleCollapse}
+            title={collapsed ? "展开编辑器" : "向上折叠编辑器"}
+          >
+            {collapsed ? "↓" : "↑"}
+          </button>
+        )}
         <h2>编辑器</h2>
         <div className="row" style={{ marginLeft: "auto" }}>
           <div className="segmented" aria-label="编辑器模式">
@@ -1175,13 +1225,23 @@ export function App() {
     </div>
   );
 
-  const TerminalPanel = (
+  const TerminalPanel = ({
+    collapsed,
+    onToggleCollapse,
+  }: {
+    collapsed?: boolean;
+    onToggleCollapse?: () => void;
+  } = {}) => (
     <div
-      className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")}
+      className={
+        "panel" +
+        (isMobile && mobileTab !== "terminal" ? " hidden" : "") +
+        (!isMobile && collapsed ? " panelCollapsed panelVerticalCollapsed" : "")
+      }
       style={{
-        flex: isMobile ? 1 : undefined,
-        height: isMobile ? undefined : `${topHeight}%`,
-        minHeight: isMobile ? 0 : undefined,
+        flex: isMobile ? 1 : collapsed ? undefined : 1,
+        height: isMobile ? undefined : collapsed ? undefined : `${topHeight}%`,
+        minHeight: isMobile ? "65dvh" : collapsed ? undefined : 0,
       }}
     >
       {/* 工作区标签 */}
@@ -1213,6 +1273,16 @@ export function App() {
       </div>
       <div className="panelHeader termPanelHeader">
         <div className="termPanelHeaderRow">
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="panelCollapseBtn"
+              onClick={onToggleCollapse}
+              title={collapsed ? "展开终端" : "向下折叠终端"}
+            >
+              {collapsed ? "↑" : "↓"}
+            </button>
+          )}
           <h2>终端</h2>
           <div className="segmented" aria-label="终端模式">
             <button
@@ -1239,27 +1309,71 @@ export function App() {
               Restricted
             </button>
           </div>
+          {(termMode === "codex" || termMode === "restricted") && (
+            <button
+              type="button"
+              className="termPasteBtn"
+              title="粘贴到终端"
+              onClick={() => {
+                const sid = termSessionIdRef.current;
+                const client = termClientRef.current;
+                if (!sid || !client) return;
+                setPasteModalText("");
+                setPasteModalOpen(true);
+                setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
+              }}
+            >
+              粘贴
+            </button>
+          )}
         </div>
         <div className="termPanelHeaderCwd" title={terminalCwd}>
           {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
         </div>
       </div>
       
-      {/* 保持两个视图都挂载；切换可见性以避免 xterm 丢失容器 */}
-      <div style={{ display: termMode === "cursor" ? "block" : "none", flex: 1, minHeight: 0 }}>
-        <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
-      </div>
+      {/* 终端/会话区域：Cursor 聊天与 xterm 共用同一区域，高度与终端会话区域一致 */}
       <div
-        className="term"
-        ref={termDivRef}
+        className="termAreaWrap"
         style={{
-          display: termMode === "cursor" ? "none" : "block",
-          flex: termMode === "cursor" ? undefined : 1,
-          minHeight: termMode === "cursor" ? undefined : 0,
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          position: "relative",
         }}
-        onMouseDown={() => termRef.current?.focus()}
-        onTouchStart={() => termRef.current?.focus()}
-      />
+      >
+        <div
+          className={
+            "termChatWrap termPane " +
+            (termMode === "cursor" ? "termPaneActive" : "termPaneHidden")
+          }
+          style={{
+            flex: 1,
+            minHeight: 0,
+            height: "100%",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
+        </div>
+        <div
+          className={
+            "term termPane " +
+            (termMode === "cursor" ? "termPaneHidden" : "termPaneActive")
+          }
+          ref={termDivRef}
+          style={{
+            minHeight: termMode === "cursor" ? undefined : (isMobile ? 120 : 80),
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+          onMouseDown={() => termRef.current?.focus()}
+          onTouchStart={() => termRef.current?.focus()}
+        />
+      </div>
     </div>
   );
 
@@ -1267,31 +1381,55 @@ export function App() {
     <>
         {/* 桌面端 */}
       <div className="app">
-        <div className="panel" style={{ width: isMobile ? "auto" : `${leftWidth}px`, minWidth: isMobile ? "auto" : "200px" }}>
+        <div
+          className={
+            "panel" +
+            (!isMobile && panelExplorerCollapsed ? " panelCollapsed panelExplorerCollapsed" : "")
+          }
+          style={{
+            width: isMobile ? "auto" : panelExplorerCollapsed ? 48 : leftWidth,
+            minWidth: isMobile ? "auto" : panelExplorerCollapsed ? 48 : "200px",
+          }}
+        >
           <div className="panelHeader">
-            <h2>资源管理器</h2>
-            <div className="row" style={{ marginLeft: "auto" }}>
-              <select
-                className="select"
-                value={activeRoot}
-                onChange={(e) => {
-                  setActiveRoot(e.target.value);
-                  setTerminalCwd(e.target.value);
-                  setOpenTabs([]);
-                  setActiveFile("");
-                  setFileStateByPath({});
-                  setEditorMode("edit");
-                }}
-                disabled={roots.length === 0}
-                title="根目录"
+            {!isMobile && (
+              <button
+                type="button"
+                className="panelCollapseBtn"
+                onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
+                title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
               >
-                {roots.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {panelExplorerCollapsed ? "▶" : "◀"}
+              </button>
+            )}
+            <h2>资源管理器</h2>
+            {!isMobile && panelExplorerCollapsed && (
+              <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
+            )}
+            {!panelExplorerCollapsed && (
+              <div className="row" style={{ marginLeft: "auto" }}>
+                <select
+                  className="select"
+                  value={activeRoot}
+                  onChange={(e) => {
+                    setActiveRoot(e.target.value);
+                    setTerminalCwd(e.target.value);
+                    setOpenTabs([]);
+                    setActiveFile("");
+                    setFileStateByPath({});
+                    setEditorMode("edit");
+                  }}
+                  disabled={roots.length === 0}
+                  title="根目录"
+                >
+                  {roots.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="panelBody">
             <div className="fileList">
@@ -1303,7 +1441,6 @@ export function App() {
                   onToggleDir={toggleDir}
                   onOpenFile={openFile}
                   onOpenTerminalDir={(n) => {
-                    // Auto create/switch workspace when clicking Term button
                     addWorkspace(n.path);
                     if (isMobile) setMobileTab("terminal");
                   }}
@@ -1315,16 +1452,30 @@ export function App() {
           </div>
         </div>
 
-        {!isMobile && (
+        {!isMobile && !panelExplorerCollapsed && (
           <div className="resizer" onMouseDown={() => setIsDragging(true)} title="拖拽调整大小" />
         )}
 
         <div className="right" style={{ flex: isMobile ? undefined : 1 }} ref={rightPanelRef}>
-          {EditorPanel}
-          {!isMobile && (
+          {isMobile ? (
+            <EditorPanel />
+          ) : (
+            <EditorPanel
+              collapsed={panelEditorCollapsed}
+              onToggleCollapse={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
+            />
+          )}
+          {!isMobile && !panelEditorCollapsed && !panelTerminalCollapsed && (
             <div className="resizerVertical" onMouseDown={() => setIsDraggingVertical(true)} title="拖拽调整大小" />
           )}
-          {TerminalPanel}
+          {isMobile ? (
+            <TerminalPanel />
+          ) : (
+            <TerminalPanel
+              collapsed={panelTerminalCollapsed}
+              onToggleCollapse={() => setPanelTerminalCollapsed(!panelTerminalCollapsed)}
+            />
+          )}
         </div>
       </div>
 
@@ -1368,8 +1519,57 @@ export function App() {
           </div>
 
           {ExplorerPanel}
-          {EditorPanel}
-          {TerminalPanel}
+          <EditorPanel />
+          <TerminalPanel />
+        </div>
+      ) : null}
+
+      {pasteModalOpen ? (
+        <div
+          className="pasteModalOverlay"
+          onClick={() => setPasteModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pasteModalTitle"
+        >
+          <div
+            className="pasteModalBox"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="pasteModalTitle" className="pasteModalTitle">粘贴到终端</h3>
+            <textarea
+              ref={pasteModalTextareaRef}
+              className="pasteModalTextarea"
+              value={pasteModalText}
+              onChange={(e) => setPasteModalText(e.target.value)}
+              placeholder="在此输入或粘贴内容，点击确定发送到终端"
+              rows={6}
+            />
+            <div className="pasteModalActions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setPasteModalOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const sid = termSessionIdRef.current;
+                  const client = termClientRef.current;
+                  if (sid && client && pasteModalText) {
+                    void client.stdin(sid, pasteModalText).catch(() => {});
+                  }
+                  setPasteModalOpen(false);
+                  setPasteModalText("");
+                }}
+              >
+                确定
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

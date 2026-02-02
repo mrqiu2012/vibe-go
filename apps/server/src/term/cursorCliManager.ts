@@ -87,22 +87,16 @@ export class CursorCliManager {
   }
 
   async open(cwd: string, cols: number, rows: number, mode: "agent" | "plan" | "ask" = "agent"): Promise<Session> {
-    console.log(`[CursorCliManager] open() called`, { cwd, cols, rows, mode });
-    
     if (this.sessions.size >= this.maxSessions) {
       throw new Error(`Max sessions (${this.maxSessions}) reached`);
     }
 
     const realCwd = await this.validateCwd(cwd);
-    console.log(`[CursorCliManager] validated cwd:`, realCwd);
 
-    console.log(`[CursorCliManager] loading PTY module...`);
     const pty = await loadPty();
-    console.log(`[CursorCliManager] PTY loaded`);
 
     // Find agent binary
     const agentBin = this.resolveAgentBin();
-    console.log(`[CursorCliManager] agent binary:`, agentBin);
     if (!agentBin) {
       throw new Error('Cannot find "agent" CLI. Install: curl https://cursor.com/install -fsS | bash');
     }
@@ -117,7 +111,6 @@ export class CursorCliManager {
       .filter(Boolean)
       .join(path.delimiter);
 
-    console.log(`[CursorCliManager] spawning agent`, { agentBin, args, cwd: realCwd, cols, rows });
     const term = pty.spawn(agentBin, args, {
       name: "xterm-256color",
       cols,
@@ -139,21 +132,16 @@ export class CursorCliManager {
     const sessionId = `cursor-cli-${mode}_${Math.random().toString(16).slice(2)}`;
     const session: Session = { id: sessionId, cwd: realCwd, mode, pty: term };
     this.sessions.set(sessionId, session);
-    console.log(`[CursorCliManager] session created:`, { sessionId, pid: (term as any).pid });
 
     term.onData((data: string) => {
-      const preview = data.length > 100 ? data.slice(0, 100) + "..." : data;
-      console.log(`[CursorCliManager] data from ${sessionId}:`, { bytes: data.length, preview });
       this.send({ t: "term.data", sessionId, data });
     });
 
     term.onExit((e: { exitCode?: number; signal?: number }) => {
-      console.log(`[CursorCliManager] exit ${sessionId}:`, e);
       this.send({ t: "term.exit", sessionId, code: e.exitCode });
       this.sessions.delete(sessionId);
     });
 
-    console.log(`[CursorCliManager] open() complete, returning session`);
     return session;
   }
 

@@ -159,6 +159,82 @@ input {
   overflow: hidden;
 }
 
+/* PC 端面板折叠：只显示标题栏，主体隐藏 */
+.panel.panelCollapsed .panelBody,
+.panel.panelCollapsed .tabStrip,
+.panel.panelCollapsed .codePreview,
+.panel.panelCollapsed .term,
+.panel.panelCollapsed .termChatWrap,
+.panel.panelCollapsed .termAreaWrap,
+.panel.panelCollapsed [class*="workspaceTabStrip"] {
+  display: none !important;
+}
+
+.panel.panelCollapsed .panelHeader {
+  border-radius: 14px;
+}
+
+.panel.panelCollapsed .panelHeader + .panelHeader {
+  border-top: none;
+}
+
+/* 折叠按钮（放在标题栏） */
+.panelCollapseBtn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: all 180ms ease;
+}
+
+.panelCollapseBtn:hover {
+  background: var(--panel2);
+  border-color: #cbd5e1;
+  color: var(--text);
+}
+
+/* 资源管理器折叠后窄条 */
+.panelExplorerCollapsed {
+  width: 48px !important;
+  min-width: 48px !important;
+  overflow: visible;
+}
+
+.panelExplorerCollapsed .panelHeader {
+  flex-direction: column;
+  padding: 8px 6px;
+  gap: 4px;
+}
+
+.panelExplorerCollapsed .panelHeader h2,
+.panelExplorerCollapsed .panelHeader .row,
+.panelExplorerCollapsed .panelHeader .select {
+  display: none !important;
+}
+
+/* 编辑器/终端折叠后只占一行标题栏高度 */
+.panel.panelCollapsed.panelVerticalCollapsed {
+  flex: 0 0 auto;
+  height: 40px;
+  min-height: 40px;
+}
+
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader {
+  flex: 0 0 auto;
+}
+
+.panel.panelCollapsed.panelVerticalCollapsed .termPanelHeaderCwd {
+  display: none;
+}
+
 .panelHeader {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
@@ -298,6 +374,22 @@ input {
   flex-shrink: 0;
 }
 
+.termPasteBtn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.termPasteBtn:hover {
+  background: var(--panel2);
+  border-color: #cbd5e1;
+}
+
 .termPanelHeaderCwd {
   color: var(--muted);
   font-size: 11px;
@@ -307,6 +399,55 @@ input {
   white-space: nowrap;
   min-width: 0;
   width: 100%;
+}
+
+/* 粘贴到终端弹窗 */
+.pasteModalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.pasteModalBox {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  width: 100%;
+  max-width: 420px;
+}
+.pasteModalTitle {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+.pasteModalTextarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  resize: vertical;
+  box-sizing: border-box;
+  display: block;
+  margin-bottom: 12px;
+}
+.pasteModalTextarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pasteModalActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .panelBody {
@@ -503,6 +644,30 @@ input {
   border-radius: 0 0 14px 14px;
 }
 
+.termAreaWrap {
+  position: relative;
+}
+
+.termPane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  position: absolute;
+  inset: 0;
+}
+
+.termPaneHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.termPaneActive {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 @media (max-width: 900px) {
   .app {
     display: none;
@@ -597,10 +762,15 @@ input {
     font-size: 11px;
   }
 
+  /* 移动端终端/会话区域：保证足够高度，与 65dvh 面板一致 */
+  .panel:not(.hidden) .termAreaWrap {
+    min-height: 50dvh;
+  }
+
   /* Terminal (Codex/Restricted) on mobile: ensure visible height after tab/mode switch */
   .panel:not(.hidden) .term {
     flex: 1;
-    min-height: 120px;
+    min-height: 180px;
   }
 
   .term {
@@ -625,6 +795,7 @@ input {
 
   .newChatBtn,
   .historyBtn,
+  .historyBtnWrap,
   .stopBtn {
     padding: 4px 8px;
     font-size: 11px;
@@ -632,6 +803,9 @@ input {
 
   .chatMessages {
     padding: 10px;
+  }
+
+  .chatMessagesInner {
     gap: 8px;
   }
 
@@ -676,9 +850,10 @@ input {
     font-size: 11px;
   }
 
-  /* History panel on mobile */
+  /* History panel on mobile：与对话框等高 */
   .chatHistoryPanel {
-    max-height: 240px;
+    flex: 1;
+    min-height: 0;
   }
 
   .historyHeader {
@@ -762,7 +937,8 @@ input {
   }
 
   .newChatBtn,
-  .historyBtn {
+  .historyBtn,
+  .historyBtnWrap {
     padding: 3px 6px;
     font-size: 10px;
   }
@@ -772,8 +948,9 @@ input {
 .cursorChatPanel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  height: 100%;
   background: #ffffff;
   border-radius: 0 0 12px 12px;
   overflow: hidden;
@@ -859,17 +1036,23 @@ input {
   50% { opacity: 0.4; }
 }
 
+/* 外层仅作滚动容器，高度由 flex 限制，超出时出现滚动条 */
 .chatMessages {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  min-height: 0;
+  overflow: auto;
   padding: 16px;
+  background: #fafbfc;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 内层负责布局：内容贴底，高度随内容增长，超出时由外层 .chatMessages 滚动 */
+.chatMessagesInner {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 12px;
-  background: #fafbfc;
-  min-height: 0;
-  -webkit-overflow-scrolling: touch;
+  min-height: 100%;
 }
 
 .emptyState {
@@ -934,6 +1117,75 @@ input {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
+/* Cursor 回复 Markdown 样式 */
+.messageContent .markdownBody {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.messageContent .markdownBody > *:first-child { margin-top: 0; }
+.messageContent .markdownBody > *:last-child { margin-bottom: 0; }
+.messageContent .markdownBody p { margin: 0.6em 0; }
+.messageContent .markdownBody h1, .messageContent .markdownBody h2, .messageContent .markdownBody h3,
+.messageContent .markdownBody h4, .messageContent .markdownBody h5, .messageContent .markdownBody h6 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.messageContent .markdownBody h1 { font-size: 1.35em; }
+.messageContent .markdownBody h2 { font-size: 1.2em; }
+.messageContent .markdownBody h3 { font-size: 1.1em; }
+.messageContent .markdownBody ul, .messageContent .markdownBody ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.messageContent .markdownBody li { margin: 0.25em 0; }
+.messageContent .markdownBody code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--panel2);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.messageContent .markdownBody pre {
+  margin: 0.6em 0;
+  padding: 10px 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.messageContent .markdownBody pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: 12px;
+}
+.messageContent .markdownBody blockquote {
+  margin: 0.6em 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+.messageContent .markdownBody a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.messageContent .markdownBody a:hover { text-decoration: underline; }
+.messageContent .markdownBody strong { font-weight: 600; }
+.messageContent .markdownBody hr { margin: 1em 0; border: none; border-top: 1px solid var(--border); }
+.messageContent .markdownBody table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 12px;
+}
+.messageContent .markdownBody th, .messageContent .markdownBody td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.messageContent .markdownBody th { background: var(--panel2); font-weight: 600; }
 
 .thinkingDots {
   display: flex;
@@ -1017,8 +1269,9 @@ input {
   cursor: not-allowed;
 }
 
-/* History Button */
-.historyBtn {
+/* History Button（用 div + onPointerDownCapture 保证点一次就打开） */
+.historyBtn,
+.historyBtnWrap {
   padding: 6px 12px;
   border: 1px solid var(--border);
   background: var(--panel);
@@ -1031,6 +1284,24 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.historyBtnWrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.historyBtnWrap:hover:not(.historyBtnWrapDisabled) {
+  background: var(--panel2);
+  border-color: #cbd5e1;
+  color: var(--text);
+}
+
+.historyBtnWrap.historyBtnWrapDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .historyBtn:hover:not(:disabled) {
@@ -1050,13 +1321,15 @@ input {
   color: var(--accent2);
 }
 
-/* Chat History Panel */
+/* Chat History Panel：与下方对话框区域等高，共享剩余空间 */
 .chatHistoryPanel {
   background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
   border-bottom: 1px solid var(--border);
-  max-height: 320px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   animation: slideDown 0.2s ease-out;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
@@ -1109,7 +1382,8 @@ input {
 
 .historyList {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -1369,4 +1643,3 @@ input {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
-

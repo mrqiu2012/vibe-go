@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type Message = {
   id: string;
@@ -41,10 +43,8 @@ async function fetchSessions(cwd: string): Promise<ChatSession[]> {
     const res = await fetch(`/api/chat/sessions?cwd=${encodeURIComponent(cwd)}`);
     const data = await res.json();
     if (data.ok) return data.sessions;
-    console.error("[ChatAPI] fetchSessions error:", data.error);
     return [];
-  } catch (e) {
-    console.error("[ChatAPI] fetchSessions error:", e);
+  } catch {
     return [];
   }
 }
@@ -58,10 +58,8 @@ async function createSessionApi(session: ChatSession): Promise<ChatSession | nul
     });
     const data = await res.json();
     if (data.ok) return data.session;
-    console.error("[ChatAPI] createSession error:", data.error);
     return null;
-  } catch (e) {
-    console.error("[ChatAPI] createSession error:", e);
+  } catch {
     return null;
   }
 }
@@ -78,10 +76,8 @@ async function updateSessionApi(session: ChatSession): Promise<boolean> {
       }),
     });
     const data = await res.json();
-    if (!data.ok) console.error("[ChatAPI] updateSession error:", data.error);
     return data.ok;
-  } catch (e) {
-    console.error("[ChatAPI] updateSession error:", e);
+  } catch {
     return false;
   }
 }
@@ -92,10 +88,8 @@ async function deleteSessionApi(sessionId: string): Promise<boolean> {
       method: "DELETE",
     });
     const data = await res.json();
-    if (!data.ok) console.error("[ChatAPI] deleteSession error:", data.error);
     return data.ok;
-  } catch (e) {
-    console.error("[ChatAPI] deleteSession error:", e);
+  } catch {
     return false;
   }
 }
@@ -277,14 +271,21 @@ export function CursorChatPanel({
 
       const appendAssistant = (delta: string) => {
         if (!delta) return;
-        accumulated += delta;
+        if (!accumulated.length) delta = delta.replace(/^\n+/, "");
+        if (!delta.length) return;
+        // Cursor CLI may send cumulative content (full text so far); avoid duplicating by replacing when it's a superset
+        if (delta.startsWith(accumulated)) {
+          accumulated = delta;
+        } else {
+          accumulated += delta;
+        }
         setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
       };
 
       const appendMetaLine = (line: string) => {
         if (!line) return;
-        // Keep metadata readable but not too noisy.
-        accumulated += (accumulated ? "\n" : "") + line;
+        // One newline before meta line; avoid extra blank line when content already ends with \n
+        accumulated = accumulated.replace(/\n+$/, "") + (accumulated ? "\n" : "") + line;
         setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
       };
 
@@ -445,14 +446,26 @@ export function CursorChatPanel({
         <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
           新建
         </button>
-        <button
-          className={"historyBtn" + (showHistory ? " historyBtnActive" : "")}
-          onClick={() => setShowHistory(!showHistory)}
-          disabled={loading}
+        <div
+          className={"historyBtnWrap" + (showHistory ? " historyBtnActive" : "") + (loading ? " historyBtnWrapDisabled" : "")}
           title="查看聊天历史"
+          role="button"
+          tabIndex={loading ? -1 : 0}
+          aria-pressed={showHistory}
+          onClick={() => {
+            if (loading) return;
+            setShowHistory((prev) => !prev);
+          }}
+          onKeyDown={(e) => {
+            if (loading) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setShowHistory((prev) => !prev);
+            }
+          }}
         >
-          历史 ({sessions.length})
-        </button>
+          <span className="historyBtnLabel">历史 ({sessions.length})</span>
+        </div>
         {loading && <span className="loadingIndicator">●</span>}
         {loading ? (
           <button className="stopBtn" onClick={handleStop} title="停止当前请求">
@@ -461,7 +474,7 @@ export function CursorChatPanel({
         ) : null}
       </div>
 
-      {showHistory && (
+      {showHistory ? (
         <div className="chatHistoryPanel">
           <div className="historyHeader">
             <span>聊天历史</span>
@@ -494,42 +507,51 @@ export function CursorChatPanel({
             )}
           </div>
         </div>
+      ) : (
+        <div className="chatMessages">
+          <div className="chatMessagesInner">
+            {messages.length === 0 && (
+              <div className="emptyState">
+                <p>与 Cursor {mode.charAt(0).toUpperCase() + mode.slice(1)} 开始对话。</p>
+                <p className="hint">在下方输入您的问题或任务。（Ctrl/Cmd + Enter 发送）</p>
+              </div>
+            )}
+
+            {messages.map((m) => {
+              const raw = typeof m.content === "string" ? m.content : "";
+              const content = raw.replace(/^\n+/, "").trimEnd();
+              if (!content.length) return null;
+              return (
+                <div key={m.id} className={`message ${m.role}`}>
+                  <div className="messageContent">
+                    {m.role === "assistant" ? (
+                      <div className="markdownBody">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <pre>{content}</pre>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {loading && (
+              <div className="message assistant">
+                <div className="messageContent">
+                  <div className="thinkingDots">
+                    <span>●</span>
+                    <span>●</span>
+                    <span>●</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
       )}
-
-      <div className="chatMessages">
-        {messages.length === 0 && (
-          <div className="emptyState">
-            <p>与 Cursor {mode.charAt(0).toUpperCase() + mode.slice(1)} 开始对话。</p>
-            <p className="hint">在下方输入您的问题或任务。（Ctrl/Cmd + Enter 发送）</p>
-          </div>
-        )}
-
-        {messages.map((m) => {
-          const hasContent = typeof m.content === "string" && m.content.trim().length > 0;
-          if (!hasContent) return null;
-          return (
-            <div key={m.id} className={`message ${m.role}`}>
-              <div className="messageContent">
-                <pre>{m.content}</pre>
-              </div>
-            </div>
-          );
-        })}
-
-        {loading && (
-          <div className="message assistant">
-            <div className="messageContent">
-              <div className="thinkingDots">
-                <span>●</span>
-                <span>●</span>
-                <span>●</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
 
       <div className="chatInput">
         <textarea

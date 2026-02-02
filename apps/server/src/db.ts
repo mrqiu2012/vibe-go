@@ -46,7 +46,6 @@ function getDbPath(): string {
 export function getDb(): Database.Database {
   if (!db) {
     const dbPath = getDbPath();
-    console.log(`[DB] Opening database at: ${dbPath}`);
     db = new Database(dbPath);
     
     // Enable WAL mode for better performance

@@ -81,8 +81,6 @@ export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" 
       exitCode: result.exitCode,
     };
   } catch (error: any) {
-    console.error(`[CursorAgent] Error:`, error.message);
-    
     // Handle timeout
     if (error.timedOut) {
       throw new Error(

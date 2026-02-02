@@ -47,12 +47,8 @@ async function checkAgentCli() {
       },
       timeout: 5000,
     });
-    console.log("[server] ✓ Cursor Agent CLI detected");
     return true;
   } catch {
-    console.warn("[server] ⚠️  Cursor Agent CLI not found");
-    console.warn("[server]     Install: curl https://cursor.com/install -fsS | bash");
-    console.warn("[server]     Agent/Plan/Ask modes will be unavailable");
     return false;
   }
 }
@@ -474,15 +470,10 @@ async function main() {
     validateCwd: (cwd) => validatePathInRoots(cwd, roots),
   });
 
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`[server] listening on http://0.0.0.0:${port}`);
-    console.log(`[server] config: ${configPath}`);
-    console.log(`[server] roots: ${roots.join(", ")}`);
-  });
+  server.listen(port, "0.0.0.0", () => {});
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch(() => {
   process.exit(1);
 });
 

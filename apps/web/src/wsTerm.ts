@@ -15,12 +15,10 @@ export class TermClient {
   private pending = new Map<string, (msg: any) => void>();
   private outbox: string[] = [];
   onMsg?: (msg: TermServerMsg) => void;
-  debug = true; // Enable for debugging CLI-Agent
+  debug = false;
 
-  private log(...args: any[]) {
+  private log(..._args: any[]) {
     if (!this.debug) return;
-    // eslint-disable-next-line no-console
-    console.log("[TermClient]", ...args);
   }
 
   connect(): Promise<void> {

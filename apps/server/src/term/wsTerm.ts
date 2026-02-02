@@ -121,13 +121,10 @@ export function attachTermWs(opts: {
             }
           } else if (mode === "cursor-cli-agent" || mode === "cursor-cli-plan" || mode === "cursor-cli-ask") {
             const cliMode = mode === "cursor-cli-agent" ? "agent" : mode === "cursor-cli-plan" ? "plan" : "ask";
-            console.log(`[wsTerm] Opening cursor-cli session`, { mode, cliMode, realCwd, cols, rows });
             try {
               const s = await cursorCliMgr.open(realCwd, cols, rows, cliMode);
-              console.log(`[wsTerm] cursor-cli session opened`, { sessionId: s.id, cwd: s.cwd });
               send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
             } catch (e: any) {
-              console.error(`[wsTerm] cursor-cli open failed:`, e);
               return fail("term.open", `Cursor CLI (${cliMode}) failed: ${e?.message ?? String(e)}`);
             }
           } else {
