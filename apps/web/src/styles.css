@@ -220,15 +220,11 @@ input {
   display: none !important;
 }
 
-/* 编辑器/终端折叠后只占一行标题栏高度 */
+/* 编辑器/终端折叠后只占一行标题栏高度，不覆盖 .panelHeader 样式；min-height 防止在 flex 中被压成 0 */
 .panel.panelCollapsed.panelVerticalCollapsed {
   flex: 0 0 auto;
-  height: 40px;
-  min-height: 40px;
-}
-
-.panel.panelCollapsed.panelVerticalCollapsed .panelHeader {
-  flex: 0 0 auto;
+  height: auto;
+  min-height: 44px;
 }
 
 .panel.panelCollapsed.panelVerticalCollapsed .termPanelHeaderCwd {
@@ -252,7 +248,7 @@ input {
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 8px 8px 0 8px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   flex-shrink: 0;

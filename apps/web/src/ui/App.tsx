@@ -391,6 +391,36 @@ export function App() {
     }
   }, []);
 
+  // Sometimes after switching Cursor <-> Codex/Restricted, the terminal container DOM may be re-created
+  // (or third-party children removed), leaving the term div empty:
+  // <div class="term termPane termPaneActive"></div>
+  // In that case, re-attach xterm to the current container and refit.
+  const ensureTermAttached = useCallback(() => {
+    const el = termDivRef.current;
+    const term = termRef.current;
+    if (!el || !term) return;
+
+    const existingXterm = el.querySelector(".xterm");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const termElement = (term as any)?.element as HTMLElement | undefined | null;
+    const attachedHere = termElement ? el.contains(termElement) : false;
+    if (existingXterm && attachedHere) return;
+
+    // Best-effort detach from any previous parent and clear the container before re-opening.
+    try {
+      if (termElement?.parentElement && termElement.parentElement !== el) {
+        termElement.parentElement.removeChild(termElement);
+      }
+    } catch {}
+    try {
+      // Clear any stale nodes to avoid duplicates when re-opening.
+      el.innerHTML = "";
+    } catch {}
+    try {
+      term.open(el);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     apiRoots()
       .then((r) => {
@@ -617,6 +647,7 @@ export function App() {
       const r = await apiRead(node.path);
       setActiveFile(r.path);
       setEditorMode("edit");
+      if (!isMobile) setPanelEditorCollapsed(false); // 点击文件时若编辑器折叠则展开
       setOpenTabs((prev) => (prev.includes(r.path) ? prev : [...prev, r.path]));
       setFileStateByPath((prev) => ({
         ...prev,
@@ -920,6 +951,7 @@ export function App() {
     if (!terminalVisible) return;
     if (termMode === "cursor") return;
     const runFit = () => {
+      ensureTermAttached();
       const el = termDivRef.current;
       if (el) void el.offsetHeight; // force reflow before fit
       safeFitTerm();
@@ -948,7 +980,7 @@ export function App() {
       clearTimeout(t4);
       clearTimeout(t5);
     };
-  }, [terminalVisible, termMode, safeFitTerm]);
+  }, [terminalVisible, termMode, safeFitTerm, ensureTermAttached]);
 
   // Terminal cleanup (unmount only)
   useEffect(() => {
@@ -1094,288 +1126,9 @@ export function App() {
     </div>
   );
 
-  const EditorPanel = ({
-    collapsed,
-    onToggleCollapse,
-  }: {
-    collapsed?: boolean;
-    onToggleCollapse?: () => void;
-  } = {}) => (
-    <div
-      className={
-        "panel" +
-        (isMobile && mobileTab !== "editor" ? " hidden" : "") +
-        (!isMobile && collapsed ? " panelCollapsed panelVerticalCollapsed" : "")
-      }
-      style={{
-        flex: isMobile ? 1 : collapsed ? undefined : 1,
-        height: isMobile ? undefined : collapsed ? undefined : `${100 - topHeight}%`,
-        minHeight: isMobile ? undefined : collapsed ? undefined : 0,
-      }}
-    >
-      {openTabs.length ? (
-        <div className="tabStrip" role="tablist" aria-label="已打开文件">
-          {openTabs.map((p) => {
-            const isActive = p === activeFile;
-            const isDirty = fileStateByPath[p]?.dirty;
-            return (
-              <div
-                key={p}
-                className={"fileTab" + (isActive ? " fileTabActive" : "")}
-                role="tab"
-                aria-selected={isActive}
-                tabIndex={0}
-                title={p}
-                onClick={() => {
-                  setActiveFile(p);
-                  if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    setActiveFile(p);
-                    if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
-                  }
-                }}
-              >
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {baseName(p)}
-                  {isDirty ? " •" : ""}
-                </span>
-                <button
-                  className="tabClose"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(p);
-                  }}
-                  aria-label={`关闭 ${baseName(p)}`}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <div className="panelHeader">
-        {onToggleCollapse && (
-          <button
-            type="button"
-            className="panelCollapseBtn"
-            onClick={onToggleCollapse}
-            title={collapsed ? "展开编辑器" : "向上折叠编辑器"}
-          >
-            {collapsed ? "↓" : "↑"}
-          </button>
-        )}
-        <h2>编辑器</h2>
-        <div className="row" style={{ marginLeft: "auto" }}>
-          <div className="segmented" aria-label="编辑器模式">
-            <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
-              编辑
-            </button>
-            <button
-              className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
-              onClick={() => setEditorMode("preview")}
-              disabled={!activeFile}
-              title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
-            >
-              预览
-            </button>
-          </div>
-          <span className="fileMeta" title={activeFile}>
-            {activeFile ? baseName(activeFile) : "(无文件)"}
-            {dirty ? " *" : ""}
-          </span>
-          {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
-          <button className="btn" onClick={save} disabled={!activeFile || !dirty}>
-            保存
-          </button>
-        </div>
-      </div>
-      {editorMode === "preview" && activeFile ? (
-        <CodePreview path={activeFile} code={fileText} />
-      ) : (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <Editor
-            value={fileText}
-            path={activeFile || "untitled.txt"}
-            defaultLanguage="plaintext"
-            language={activeFile ? languageFromPath(activeFile) ?? "plaintext" : "plaintext"}
-            onChange={(v) => {
-              const next = v ?? "";
-              if (!activeFile) return;
-              setFileStateByPath((prev) => ({
-                ...prev,
-                [activeFile]: { text: next, dirty: true, info: prev[activeFile]?.info ?? null },
-              }));
-            }}
-            theme="vs"
-            options={{
-              fontFamily: "var(--mono)",
-              fontSize: 12,
-              minimap: { enabled: false },
-              wordWrap: "on",
-              scrollBeyondLastLine: false,
-              smoothScrolling: true,
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-
-  const TerminalPanel = ({
-    collapsed,
-    onToggleCollapse,
-  }: {
-    collapsed?: boolean;
-    onToggleCollapse?: () => void;
-  } = {}) => (
-    <div
-      className={
-        "panel" +
-        (isMobile && mobileTab !== "terminal" ? " hidden" : "") +
-        (!isMobile && collapsed ? " panelCollapsed panelVerticalCollapsed" : "")
-      }
-      style={{
-        flex: isMobile ? 1 : collapsed ? undefined : 1,
-        height: isMobile ? undefined : collapsed ? undefined : `${topHeight}%`,
-        minHeight: isMobile ? "65dvh" : collapsed ? undefined : 0,
-      }}
-    >
-      {/* 工作区标签 */}
-      <div className="workspaceTabStrip">
-        {workspaces.length === 0 ? (
-          <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
-        ) : (
-          workspaces.map((ws) => (
-            <div
-              key={ws.id}
-              className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
-              onClick={() => switchWorkspace(ws.id)}
-              title={ws.cwd}
-            >
-              <span className="workspaceTabName">{ws.name}</span>
-              <button
-                className="workspaceTabClose"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeWorkspace(ws.id);
-                }}
-                title="关闭工作区"
-              >
-                ×
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="panelHeader termPanelHeader">
-        <div className="termPanelHeaderRow">
-          {onToggleCollapse && (
-            <button
-              type="button"
-              className="panelCollapseBtn"
-              onClick={onToggleCollapse}
-              title={collapsed ? "展开终端" : "向下折叠终端"}
-            >
-              {collapsed ? "↑" : "↓"}
-            </button>
-          )}
-          <h2>终端</h2>
-          <div className="segmented" aria-label="终端模式">
-            <button
-              className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
-              onClick={() => {
-                setTermMode("cursor");
-              }}
-              title="Cursor AI（非交互模式）"
-            >
-              Cursor
-            </button>
-            <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
-              setTermMode("codex");
-              termRef.current?.focus();
-              setTimeout(() => termRef.current?.focus(), 50);
-            }}>
-              Codex
-            </button>
-            <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
-              setTermMode("restricted");
-              termRef.current?.focus();
-              setTimeout(() => termRef.current?.focus(), 50);
-            }}>
-              Restricted
-            </button>
-          </div>
-          {(termMode === "codex" || termMode === "restricted") && (
-            <button
-              type="button"
-              className="termPasteBtn"
-              title="粘贴到终端"
-              onClick={() => {
-                const sid = termSessionIdRef.current;
-                const client = termClientRef.current;
-                if (!sid || !client) return;
-                setPasteModalText("");
-                setPasteModalOpen(true);
-                setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
-              }}
-            >
-              粘贴
-            </button>
-          )}
-        </div>
-        <div className="termPanelHeaderCwd" title={terminalCwd}>
-          {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
-        </div>
-      </div>
-      
-      {/* 终端/会话区域：Cursor 聊天与 xterm 共用同一区域，高度与终端会话区域一致 */}
-      <div
-        className="termAreaWrap"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
-        <div
-          className={
-            "termChatWrap termPane " +
-            (termMode === "cursor" ? "termPaneActive" : "termPaneHidden")
-          }
-          style={{
-            flex: 1,
-            minHeight: 0,
-            height: "100%",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
-        </div>
-        <div
-          className={
-            "term termPane " +
-            (termMode === "cursor" ? "termPaneHidden" : "termPaneActive")
-          }
-          ref={termDivRef}
-          style={{
-            minHeight: termMode === "cursor" ? undefined : (isMobile ? 120 : 80),
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-          onMouseDown={() => termRef.current?.focus()}
-          onTouchStart={() => termRef.current?.focus()}
-        />
-      </div>
-    </div>
-  );
+  // Editor panel and Terminal panel are inlined (not inner components) so that toggling
+  // collapse does not change component identity and thus does not unmount/remount
+  // CursorChatPanel or trigger session list refetch / terminal session reopen.
 
   return (
     <>
@@ -1457,25 +1210,273 @@ export function App() {
         )}
 
         <div className="right" style={{ flex: isMobile ? undefined : 1 }} ref={rightPanelRef}>
-          {isMobile ? (
-            <EditorPanel />
-          ) : (
-            <EditorPanel
-              collapsed={panelEditorCollapsed}
-              onToggleCollapse={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
-            />
-          )}
+          {/* Editor panel (inlined to avoid remount on collapse toggle) */}
+          <div
+            className={
+              "panel" +
+              (isMobile && mobileTab !== "editor" ? " hidden" : "") +
+              (!isMobile && panelEditorCollapsed ? " panelCollapsed panelVerticalCollapsed" : "")
+            }
+            style={{
+              flex: isMobile ? 1 : panelEditorCollapsed ? undefined : 1,
+              height: isMobile ? undefined : panelEditorCollapsed ? undefined : `${100 - topHeight}%`,
+              minHeight: isMobile ? undefined : panelEditorCollapsed ? undefined : 0,
+            }}
+          >
+            {openTabs.length ? (
+              <div className="tabStrip" role="tablist" aria-label="已打开文件">
+                {openTabs.map((p) => {
+                  const isActive = p === activeFile;
+                  const isDirty = fileStateByPath[p]?.dirty;
+                  return (
+                    <div
+                      key={p}
+                      className={"fileTab" + (isActive ? " fileTabActive" : "")}
+                      role="tab"
+                      aria-selected={isActive}
+                      tabIndex={0}
+                      title={p}
+                      onClick={() => {
+                        setActiveFile(p);
+                        if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          setActiveFile(p);
+                          if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                        }
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {baseName(p)}
+                        {isDirty ? " •" : ""}
+                      </span>
+                      <button
+                        className="tabClose"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeTab(p);
+                        }}
+                        aria-label={`关闭 ${baseName(p)}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div className="panelHeader">
+              {!isMobile && (
+                <button
+                  type="button"
+                  className="panelCollapseBtn"
+                  onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
+                  title={panelEditorCollapsed ? "展开编辑器" : "向上折叠编辑器"}
+                >
+                  {panelEditorCollapsed ? "↓" : "↑"}
+                </button>
+              )}
+              <h2>编辑器</h2>
+              <div className="row" style={{ marginLeft: "auto" }}>
+                <div className="segmented" aria-label="编辑器模式">
+                  <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
+                    编辑
+                  </button>
+                  <button
+                    className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
+                    onClick={() => setEditorMode("preview")}
+                    disabled={!activeFile}
+                    title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
+                  >
+                    预览
+                  </button>
+                </div>
+                <span className="fileMeta" title={activeFile}>
+                  {activeFile ? baseName(activeFile) : "(无文件)"}
+                  {dirty ? " *" : ""}
+                </span>
+                {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
+                <button className="btn" onClick={save} disabled={!activeFile || !dirty}>
+                  保存
+                </button>
+              </div>
+            </div>
+            <div className="panelBody" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {editorMode === "preview" && activeFile ? (
+                <CodePreview path={activeFile} code={fileText} />
+              ) : (
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <Editor
+                    value={fileText}
+                    path={activeFile || "untitled.txt"}
+                    defaultLanguage="plaintext"
+                    language={activeFile ? languageFromPath(activeFile) ?? "plaintext" : "plaintext"}
+                    onChange={(v) => {
+                      const next = v ?? "";
+                      if (!activeFile) return;
+                      setFileStateByPath((prev) => ({
+                        ...prev,
+                        [activeFile]: { text: next, dirty: true, info: prev[activeFile]?.info ?? null },
+                      }));
+                    }}
+                    theme="vs"
+                    options={{
+                      fontFamily: "var(--mono)",
+                      fontSize: 12,
+                      minimap: { enabled: false },
+                      wordWrap: "on",
+                      scrollBeyondLastLine: false,
+                      smoothScrolling: true,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
           {!isMobile && !panelEditorCollapsed && !panelTerminalCollapsed && (
             <div className="resizerVertical" onMouseDown={() => setIsDraggingVertical(true)} title="拖拽调整大小" />
           )}
-          {isMobile ? (
-            <TerminalPanel />
-          ) : (
-            <TerminalPanel
-              collapsed={panelTerminalCollapsed}
-              onToggleCollapse={() => setPanelTerminalCollapsed(!panelTerminalCollapsed)}
-            />
-          )}
+          {/* Terminal panel (inlined to avoid remount on collapse toggle) */}
+          <div
+            className={
+              "panel" +
+              (isMobile && mobileTab !== "terminal" ? " hidden" : "") +
+              (!isMobile && panelTerminalCollapsed ? " panelCollapsed panelVerticalCollapsed" : "")
+            }
+            style={{
+              flex: isMobile ? 1 : panelTerminalCollapsed ? undefined : 1,
+              height: isMobile ? undefined : panelTerminalCollapsed ? undefined : `${topHeight}%`,
+              minHeight: isMobile ? "65dvh" : panelTerminalCollapsed ? undefined : 0,
+            }}
+          >
+            <div className="workspaceTabStrip">
+              {workspaces.length === 0 ? (
+                <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
+              ) : (
+                workspaces.map((ws) => (
+                  <div
+                    key={ws.id}
+                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
+                    onClick={() => switchWorkspace(ws.id)}
+                    title={ws.cwd}
+                  >
+                    <span className="workspaceTabName">{ws.name}</span>
+                    <button
+                      className="workspaceTabClose"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeWorkspace(ws.id);
+                      }}
+                      title="关闭工作区"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="panelHeader termPanelHeader">
+              <div className="termPanelHeaderRow">
+                {!isMobile && (
+                  <button
+                    type="button"
+                    className="panelCollapseBtn"
+                    onClick={() => setPanelTerminalCollapsed(!panelTerminalCollapsed)}
+                    title={panelTerminalCollapsed ? "展开终端" : "向下折叠终端"}
+                  >
+                    {panelTerminalCollapsed ? "↑" : "↓"}
+                  </button>
+                )}
+                <h2>终端</h2>
+                <div className="segmented" aria-label="终端模式">
+                  <button
+                    className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
+                    onClick={() => setTermMode("cursor")}
+                    title="Cursor AI（非交互模式）"
+                  >
+                    Cursor
+                  </button>
+                  <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("codex");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    Codex
+                  </button>
+                  <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("restricted");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    Restricted
+                  </button>
+                </div>
+                {(termMode === "codex" || termMode === "restricted") && (
+                  <button
+                    type="button"
+                    className="termPasteBtn"
+                    title="粘贴到终端"
+                    onClick={() => {
+                      const sid = termSessionIdRef.current;
+                      const client = termClientRef.current;
+                      if (!sid || !client) return;
+                      setPasteModalText("");
+                      setPasteModalOpen(true);
+                      setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
+                    }}
+                  >
+                    粘贴
+                  </button>
+                )}
+              </div>
+              <div className="termPanelHeaderCwd" title={terminalCwd}>
+                {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
+              </div>
+            </div>
+            <div
+              className="termAreaWrap"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                position: "relative",
+              }}
+            >
+              <div
+                className={
+                  "termChatWrap termPane " +
+                  (termMode === "cursor" ? "termPaneActive" : "termPaneHidden")
+                }
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  height: "100%",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
+              </div>
+              <div
+                className={
+                  "term termPane " +
+                  (termMode === "cursor" ? "termPaneHidden" : "termPaneActive")
+                }
+                ref={termDivRef}
+                style={{
+                  minHeight: termMode === "cursor" ? undefined : (isMobile ? 120 : 80),
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+                onMouseDown={() => termRef.current?.focus()}
+                onTouchStart={() => termRef.current?.focus()}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1519,8 +1520,223 @@ export function App() {
           </div>
 
           {ExplorerPanel}
-          <EditorPanel />
-          <TerminalPanel />
+          {/* Mobile editor panel (same structure as desktop, isMobile makes collapse btn hidden) */}
+          <div
+            className={"panel" + (isMobile && mobileTab !== "editor" ? " hidden" : "")}
+            style={{ flex: 1 }}
+          >
+            {openTabs.length ? (
+              <div className="tabStrip" role="tablist" aria-label="已打开文件">
+                {openTabs.map((p) => {
+                  const isActive = p === activeFile;
+                  const isDirty = fileStateByPath[p]?.dirty;
+                  return (
+                    <div
+                      key={p}
+                      className={"fileTab" + (isActive ? " fileTabActive" : "")}
+                      role="tab"
+                      aria-selected={isActive}
+                      tabIndex={0}
+                      title={p}
+                      onClick={() => {
+                        setActiveFile(p);
+                        if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          setActiveFile(p);
+                          if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                        }
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {baseName(p)}
+                        {isDirty ? " •" : ""}
+                      </span>
+                      <button
+                        className="tabClose"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeTab(p);
+                        }}
+                        aria-label={`关闭 ${baseName(p)}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            <div className="panelHeader">
+              <h2>编辑器</h2>
+              <div className="row" style={{ marginLeft: "auto" }}>
+                <div className="segmented" aria-label="编辑器模式">
+                  <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
+                    编辑
+                  </button>
+                  <button
+                    className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
+                    onClick={() => setEditorMode("preview")}
+                    disabled={!activeFile}
+                    title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
+                  >
+                    预览
+                  </button>
+                </div>
+                <span className="fileMeta" title={activeFile}>
+                  {activeFile ? baseName(activeFile) : "(无文件)"}
+                  {dirty ? " *" : ""}
+                </span>
+                {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
+                <button className="btn" onClick={save} disabled={!activeFile || !dirty}>
+                  保存
+                </button>
+              </div>
+            </div>
+            {editorMode === "preview" && activeFile ? (
+              <CodePreview path={activeFile} code={fileText} />
+            ) : (
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <Editor
+                  value={fileText}
+                  path={activeFile || "untitled.txt"}
+                  defaultLanguage="plaintext"
+                  language={activeFile ? languageFromPath(activeFile) ?? "plaintext" : "plaintext"}
+                  onChange={(v) => {
+                    const next = v ?? "";
+                    if (!activeFile) return;
+                    setFileStateByPath((prev) => ({
+                      ...prev,
+                      [activeFile]: { text: next, dirty: true, info: prev[activeFile]?.info ?? null },
+                    }));
+                  }}
+                  theme="vs"
+                  options={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 12,
+                    minimap: { enabled: false },
+                    wordWrap: "on",
+                    scrollBeyondLastLine: false,
+                    smoothScrolling: true,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+          {/* Mobile terminal panel */}
+          <div
+            className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")}
+            style={{ flex: 1, minHeight: "65dvh" }}
+          >
+            <div className="workspaceTabStrip">
+              {workspaces.length === 0 ? (
+                <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
+              ) : (
+                workspaces.map((ws) => (
+                  <div
+                    key={ws.id}
+                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
+                    onClick={() => switchWorkspace(ws.id)}
+                    title={ws.cwd}
+                  >
+                    <span className="workspaceTabName">{ws.name}</span>
+                    <button
+                      className="workspaceTabClose"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeWorkspace(ws.id);
+                      }}
+                      title="关闭工作区"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="panelHeader termPanelHeader">
+              <div className="termPanelHeaderRow">
+                <h2>终端</h2>
+                <div className="segmented" aria-label="终端模式">
+                  <button
+                    className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
+                    onClick={() => setTermMode("cursor")}
+                    title="Cursor AI（非交互模式）"
+                  >
+                    Cursor
+                  </button>
+                  <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => setTermMode("codex")}>
+                    Codex
+                  </button>
+                  <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => setTermMode("restricted")}>
+                    Restricted
+                  </button>
+                </div>
+                {(termMode === "codex" || termMode === "restricted") && (
+                  <button
+                    type="button"
+                    className="termPasteBtn"
+                    title="粘贴到终端"
+                    onClick={() => {
+                      const sid = termSessionIdRef.current;
+                      const client = termClientRef.current;
+                      if (!sid || !client) return;
+                      setPasteModalText("");
+                      setPasteModalOpen(true);
+                      setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
+                    }}
+                  >
+                    粘贴
+                  </button>
+                )}
+              </div>
+              <div className="termPanelHeaderCwd" title={terminalCwd}>
+                {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
+              </div>
+            </div>
+            <div
+              className="termAreaWrap"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                position: "relative",
+              }}
+            >
+              <div
+                className={
+                  "termChatWrap termPane " +
+                  (termMode === "cursor" ? "termPaneActive" : "termPaneHidden")
+                }
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  height: "100%",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
+              </div>
+              <div
+                className={
+                  "term termPane " +
+                  (termMode === "cursor" ? "termPaneHidden" : "termPaneActive")
+                }
+                ref={termDivRef}
+                style={{
+                  minHeight: termMode === "cursor" ? undefined : 120,
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+                onMouseDown={() => termRef.current?.focus()}
+                onTouchStart={() => termRef.current?.focus()}
+              />
+            </div>
+          </div>
         </div>
       ) : null}
 
