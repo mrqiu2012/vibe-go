@@ -6,9 +6,9 @@ export type CommandSpec = { title?: string };
 export type AppConfig = {
   server?: { port?: number };
   roots: string[];
-  // Legacy: if non-empty, acts as an allowlist (restricted mode).
+  /** 任务输出缓冲目录，默认 repo/data/agent-buffers */
+  bufferDir?: string;
   commandWhitelist?: Record<string, CommandSpec>;
-  // Preferred: blacklist in restricted mode (everything else allowed).
   dangerousCommandDenylist?: string[];
   limits?: {
     timeoutSec?: number;

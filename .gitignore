@@ -38,6 +38,9 @@ coverage/
 *.temp
 .cache/
 
+# Agent runtime buffers
+data/agent-buffers/
+
 # OS
 Thumbs.db
 ehthumbs.db

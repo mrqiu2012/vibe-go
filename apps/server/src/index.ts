@@ -1,7 +1,10 @@
 import http from "node:http";
 import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import type { Response } from "express";
 import cors from "cors";
 import { execa } from "execa";
 
@@ -66,6 +69,10 @@ async function main() {
   const timeoutSec = cfg.limits?.timeoutSec ?? 900;
   const maxOutputKB = cfg.limits?.maxOutputKB ?? 1024;
   const maxSessions = cfg.limits?.maxSessions ?? 4;
+  const bufferDir = cfg.bufferDir ?? path.join(repoRoot, "data", "agent-buffers");
+  try {
+    fs.mkdirSync(bufferDir, { recursive: true });
+  } catch {}
 
   const app = express();
   const allowedOrigin = (origin: string | undefined) => {
@@ -86,6 +93,23 @@ async function main() {
     }),
   );
   app.use(express.json({ limit: "10mb" }));
+
+  // 方案 A：runId + 缓冲 + 重连。Map<runId, AgentRun>
+  type AgentRun = {
+    buffer: string[];
+    listeners: Set<Response>;
+    ended: boolean;
+    endFrame: string | null;
+    stop: () => void;
+  };
+  const agentRuns = new Map<string, AgentRun>();
+
+  // 向单个 res 写一行 NDJSON（带换行）
+  const writeNdjsonLine = (res: Response, line: string) => {
+    try {
+      res.write(line.endsWith("\n") ? line : line + "\n");
+    } catch {}
+  };
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, roots, uptimeSec: Math.floor(process.uptime()) });
@@ -147,6 +171,8 @@ async function main() {
   });
 
   app.post("/api/cursor-agent/stream", async (req, res) => {
+    let runIdToClean: string | undefined;
+    let runToClean: AgentRun | undefined;
     try {
       const prompt = String(req.body?.prompt ?? "");
       const mode = String(req.body?.mode ?? "agent") as "agent" | "plan" | "ask";
@@ -158,25 +184,35 @@ async function main() {
         return res.status(400).json({ ok: false, error: "Missing prompt" });
       }
 
-      // Validate cwd is in roots
       const realCwd = await validatePathInRoots(cwd, roots);
+
+      const runId = crypto.randomUUID();
+      const run: AgentRun = {
+        buffer: [],
+        listeners: new Set(),
+        ended: false,
+        endFrame: null,
+        stop: () => {},
+      };
+      runIdToClean = runId;
+      runToClean = run;
+      agentRuns.set(runId, run);
+      run.listeners.add(res);
 
       res.status(200);
       res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
-      // Disable proxy buffering (best-effort; harmless if ignored)
+      res.setHeader("X-Run-Id", runId);
       res.setHeader("X-Accel-Buffering", "no");
-      // Flush headers early so the client starts reading immediately.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (res as any).flushHeaders?.();
 
-      let ended = false;
-      const safeWrite = (line: string) => {
-        if (ended) return;
-        try {
-          res.write(line.endsWith("\n") ? line : line + "\n");
-        } catch {}
+      const broadcast = (line: string) => {
+        run.buffer.push(line);
+        for (const r of run.listeners) {
+          writeNdjsonLine(r, line);
+        }
       };
 
       const { stop } = await spawnCursorAgentStream({
@@ -185,35 +221,41 @@ async function main() {
         cwd: realCwd,
         force,
         resume: resume.trim() ? resume.trim() : undefined,
-        // Inactivity timeout: kill agent if no output for this duration.
-        // Config timeoutSec is used (default 900s = 15 min), but with activity
-        // detection the timer resets on each output, so it only triggers if stuck.
         timeoutMs: timeoutSec * 1000,
-        onStdoutLine: (line) => safeWrite(line),
-        onStderrLine: (line) => safeWrite(JSON.stringify({ type: "stderr", message: line })),
+        onStdoutLine: (line) => broadcast(line),
+        onStderrLine: (line) => broadcast(JSON.stringify({ type: "stderr", message: line })),
         onExit: ({ code, signal, timedOut }) => {
-          safeWrite(JSON.stringify({ type: "result", exitCode: code, signal, timedOut }));
-          ended = true;
-          try {
-            res.end();
-          } catch {}
+          const endLine = JSON.stringify({ type: "result", exitCode: code, signal, timedOut });
+          run.buffer.push(endLine);
+          run.ended = true;
+          run.endFrame = endLine;
+          for (const r of run.listeners) {
+            try {
+              writeNdjsonLine(r, endLine);
+              r.end();
+            } catch {}
+          }
+          run.listeners.clear();
+          // 保留已结束的 run 一段时间，供重连拉取全量 buffer
+          setTimeout(() => agentRuns.delete(runId), 60_000);
         },
       });
+      run.stop = stop;
 
-      // If client disconnects, stop the child to avoid leaks.
+      // 方案 A：客户端断开时只移除该连接的 listener，不杀进程
       req.on("close", () => {
-        if (ended) return;
-        ended = true;
+        run.listeners.delete(res);
         try {
-          stop();
+          res.end();
         } catch {}
       });
     } catch (e: any) {
-      // If we haven't started streaming, return JSON error.
-      // If we already started, best-effort emit an NDJSON error and end.
+      if (runIdToClean != null && runToClean != null && agentRuns.has(runIdToClean)) {
+        runToClean.listeners.delete(res);
+        agentRuns.delete(runIdToClean);
+      }
       try {
-        const headersSent = res.headersSent;
-        if (!headersSent) {
+        if (!res.headersSent) {
           return res.status(500).json({ ok: false, error: e?.message ?? String(e) });
         }
         res.write(JSON.stringify({ type: "error", message: e?.message ?? String(e) }) + "\n");
@@ -221,6 +263,198 @@ async function main() {
       } catch {
         // ignore
       }
+    }
+  });
+
+  // 方案 A：按 runId 重连，先返回已缓冲输出，再接入后续实时输出
+  app.get("/api/cursor-agent/stream/:runId", async (req, res) => {
+    const runId = req.params.runId;
+    const run = agentRuns.get(runId);
+    if (!run) {
+      return res.status(404).json({ ok: false, error: "Run not found or already finished" });
+    }
+
+    res.status(200);
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Run-Id", runId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (res as any).flushHeaders?.();
+
+    if (run.ended) {
+      for (const line of run.buffer) {
+        writeNdjsonLine(res, line);
+      }
+      try {
+        res.end();
+      } catch {}
+      return;
+    }
+
+    for (const line of run.buffer) {
+      writeNdjsonLine(res, line);
+    }
+    run.listeners.add(res);
+    req.on("close", () => {
+      run.listeners.delete(res);
+      try {
+        res.end();
+      } catch {}
+    });
+  });
+
+  // ==================== 文件缓冲方案：任务独立运行，输出写文件，前端轮询读取 ====================
+
+  type TaskRunEntry = { stop: () => void; ended: boolean };
+  const taskRunStore = new Map<string, TaskRunEntry>();
+
+  const UUID_REG = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function isSafeRunId(runId: string): boolean {
+    return UUID_REG.test(runId) && !runId.includes("..");
+  }
+
+  app.post("/api/cursor-agent/start", async (req, res) => {
+    try {
+      const prompt = String(req.body?.prompt ?? "");
+      const mode = String(req.body?.mode ?? "agent") as "agent" | "plan" | "ask";
+      const cwd = String(req.body?.cwd ?? roots[0] ?? "");
+      const force = typeof req.body?.force === "boolean" ? Boolean(req.body.force) : true;
+      const resume = typeof req.body?.resume === "string" ? String(req.body.resume).trim() : "";
+
+      if (!prompt.trim()) {
+        return res.status(400).json({ ok: false, error: "Missing prompt" });
+      }
+
+      const realCwd = await validatePathInRoots(cwd, roots);
+
+      const runId = crypto.randomUUID();
+      const filePath = path.join(bufferDir, `${runId}.ndjson`);
+      const writeStream = fs.createWriteStream(filePath, { flags: "a" });
+
+      const runEntry: TaskRunEntry = { stop: () => {}, ended: false };
+      taskRunStore.set(runId, runEntry);
+
+      const writeLine = (line: string) => {
+        try {
+          writeStream.write(line.endsWith("\n") ? line : line + "\n");
+        } catch {}
+      };
+
+      const spawnPromise = spawnCursorAgentStream({
+        prompt,
+        mode,
+        cwd: realCwd,
+        force,
+        resume: resume || undefined,
+        timeoutMs: timeoutSec * 1000,
+        onStdoutLine: (line) => writeLine(line),
+        onStderrLine: (line) => writeLine(JSON.stringify({ type: "stderr", message: line })),
+        onExit: ({ code, signal, timedOut }) => {
+          try {
+            writeLine(JSON.stringify({ type: "result", exitCode: code, signal, timedOut }));
+          } catch {}
+          try {
+            writeStream.end();
+          } catch {}
+          runEntry.ended = true;
+        },
+      });
+
+      await spawnPromise.then(
+        ({ stop }) => {
+          runEntry.stop = stop;
+        },
+        (err: Error) => {
+          try {
+            writeLine(JSON.stringify({ type: "error", message: err?.message ?? String(err) }));
+          } catch {}
+          try {
+            writeStream.end();
+          } catch {}
+          runEntry.ended = true;
+          throw err;
+        },
+      );
+      res.status(200).json({ ok: true, runId });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.get("/api/cursor-agent/task/:runId/output", async (req, res) => {
+    const runId = req.params.runId;
+    if (!isSafeRunId(runId)) {
+      return res.status(400).json({ ok: false, error: "Invalid runId" });
+    }
+
+    const filePath = path.join(bufferDir, `${runId}.ndjson`);
+    const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
+
+    try {
+      const stat = fs.statSync(filePath);
+      const size = stat.size;
+      const runEntry = taskRunStore.get(runId);
+      let ended = runEntry?.ended ?? false;
+      if (!ended && size > 0) {
+        const tailBytes = Math.min(2048, size);
+        const fd = fs.openSync(filePath, "r");
+        const tailBuf = Buffer.alloc(tailBytes);
+        fs.readSync(fd, tailBuf, 0, tailBytes, size - tailBytes);
+        fs.closeSync(fd);
+        const str = tailBuf.toString("utf8");
+        const lines = str.split("\n").map((s) => s.trim()).filter(Boolean);
+        const lastLine = lines[lines.length - 1];
+        if (lastLine) {
+          try {
+            const o = JSON.parse(lastLine) as { type?: string };
+            if (o?.type === "result") ended = true;
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!ended && !runEntry && offset >= size) {
+          ended = true;
+        }
+      }
+
+      if (offset >= size) {
+        return res.json({ ok: true, output: "", nextOffset: size, ended });
+      }
+
+      const buf: Buffer[] = [];
+      const readStream = fs.createReadStream(filePath, { start: offset });
+      for await (const chunk of readStream) {
+        buf.push(chunk as Buffer);
+      }
+      const output = Buffer.concat(buf).toString("utf8");
+      const nextOffset = offset + Buffer.byteLength(output, "utf8");
+
+      res.json({ ok: true, output, nextOffset, ended });
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        return res.status(404).json({ ok: false, error: "Run not found or no output yet" });
+      }
+      res.status(500).json({ ok: false, error: err?.message ?? String(err) });
+    }
+  });
+
+  app.post("/api/cursor-agent/task/:runId/stop", (req, res) => {
+    const runId = req.params.runId;
+    if (!isSafeRunId(runId)) {
+      return res.status(400).json({ ok: false, error: "Invalid runId" });
+    }
+
+    const runEntry = taskRunStore.get(runId);
+    if (!runEntry) {
+      return res.status(404).json({ ok: false, error: "Run not found or already finished" });
+    }
+
+    try {
+      runEntry.stop();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 

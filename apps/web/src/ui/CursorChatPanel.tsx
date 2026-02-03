@@ -30,10 +30,77 @@ function updateMessageById(messages: Message[], id: string, patch: Partial<Messa
 type StreamJsonLine = any;
 
 function extractAssistantText(evt: StreamJsonLine): string {
-  // Cursor CLI stream-json shape can evolve; be defensive.
   const text = evt?.message?.content?.[0]?.text;
   if (typeof text === "string" && text.length) return text;
   return "";
+}
+
+type SetMessages = React.Dispatch<React.SetStateAction<Message[]>>;
+
+function buildStreamHandler(
+  assistantId: string,
+  setMessages: SetMessages,
+  onSessionId?: (sid: string) => void,
+): { handleEvent: (evt: any) => void; appendMetaLine: (line: string) => void } {
+  let accumulated = "";
+  let toolCount = 0;
+  const appendAssistant = (delta: string) => {
+    if (!delta) return;
+    if (!accumulated.length) delta = delta.replace(/^\n+/, "");
+    if (!delta.length) return;
+    if (delta.startsWith(accumulated)) {
+      accumulated = delta;
+    } else {
+      accumulated += delta;
+    }
+    setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
+  };
+  const appendMetaLine = (line: string) => {
+    if (!line) return;
+    accumulated = accumulated.replace(/\n+$/, "") + (accumulated ? "\n" : "") + line;
+    setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
+  };
+  const handleEvent = (evt: any) => {
+    const t = evt?.type;
+    const subtype = evt?.subtype;
+    if (t === "system" && subtype === "init") {
+      const sid = evt?.session_id;
+      if (typeof sid === "string" && sid) onSessionId?.(sid);
+      return;
+    }
+    if (t === "assistant") {
+      appendAssistant(extractAssistantText(evt));
+      return;
+    }
+    if (t === "tool_call" && subtype === "started") {
+      toolCount += 1;
+      const argsPath =
+        evt?.tool_call?.writeToolCall?.args?.path ??
+        evt?.tool_call?.readToolCall?.args?.path ??
+        evt?.tool_call?.editToolCall?.args?.path ??
+        evt?.tool_call?.applyPatchToolCall?.args?.path;
+      if (typeof argsPath === "string" && argsPath) appendMetaLine(`[工具 #${toolCount}] ${argsPath}`);
+      else appendMetaLine(`[工具 #${toolCount}] 已启动`);
+      return;
+    }
+    if (t === "stderr") {
+      const msg = evt?.message;
+      if (typeof msg === "string" && msg.trim()) appendMetaLine(`[标准错误] ${msg.trim()}`);
+      return;
+    }
+    if (t === "error") {
+      const msg = evt?.message;
+      if (typeof msg === "string" && msg.trim()) appendMetaLine(`[错误] ${msg.trim()}`);
+      return;
+    }
+    if (t === "result") {
+      const exitCode = evt?.exitCode;
+      const timedOut = evt?.timedOut;
+      const sig = evt?.signal;
+      appendMetaLine(`[完成] 退出码=${exitCode ?? "?"}${sig ? ` 信号=${sig}` : ""}${timedOut ? " 超时=true" : ""}`);
+    }
+  };
+  return { handleEvent, appendMetaLine };
 }
 
 // ==================== Chat API ====================
@@ -115,6 +182,37 @@ function generateTitle(messages: Message[]): string {
   return text.length > 40 ? text.slice(0, 40) + "..." : text;
 }
 
+const CURSOR_RUN_STORAGE_KEY = "cursorAgentRun";
+
+type StoredRun = { cwd: string; sessionId: string; runId: string; assistantId: string; offset: number };
+
+function loadStoredRun(): StoredRun | null {
+  try {
+    const raw = localStorage.getItem(CURSOR_RUN_STORAGE_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as StoredRun;
+    if (o && typeof o.runId === "string" && typeof o.assistantId === "string" && typeof o.offset === "number") {
+      return o;
+    }
+  } catch {}
+  return null;
+}
+
+function saveStoredRun(cwd: string, sessionId: string, runId: string, assistantId: string, offset: number) {
+  try {
+    localStorage.setItem(
+      CURSOR_RUN_STORAGE_KEY,
+      JSON.stringify({ cwd, sessionId, runId, assistantId, offset }),
+    );
+  } catch {}
+}
+
+function clearStoredRun() {
+  try {
+    localStorage.removeItem(CURSOR_RUN_STORAGE_KEY);
+  } catch {}
+}
+
 export function CursorChatPanel({
   mode,
   onModeChange,
@@ -132,7 +230,13 @@ export function CursorChatPanel({
   const [chatId, setChatId] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const assistantIdRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string>("");
+  const offsetRef = useRef(0);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopRequestedRef = useRef(false);
+  const handlerRef = useRef<ReturnType<typeof buildStreamHandler> | null>(null);
 
   // Load sessions from database on mount or cwd change (skip when cwd not yet set)
   useEffect(() => {
@@ -183,6 +287,15 @@ export function CursorChatPanel({
     });
   }, [currentSessionId]);
 
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, []);
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -197,10 +310,88 @@ export function CursorChatPanel({
     return () => clearTimeout(timer);
   }, [messages, currentSessionId, updateCurrentSession]);
 
+  // 关掉网页再打开：若本地有该会话的未结束 run，恢复轮询并继续拉输出
+  useEffect(() => {
+    if (!cwd || !currentSessionId || pollIntervalRef.current) return;
+    const stored = loadStoredRun();
+    if (!stored || stored.cwd !== cwd || stored.sessionId !== currentSessionId) return;
+
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === stored.assistantId)) return prev;
+      return [...prev, { id: stored.assistantId, role: "assistant" as const, content: "", timestamp: Date.now() }];
+    });
+    runIdRef.current = stored.runId;
+    assistantIdRef.current = stored.assistantId;
+    sessionIdRef.current = stored.sessionId;
+    offsetRef.current = stored.offset;
+    setLoading(true);
+    handlerRef.current = buildStreamHandler(stored.assistantId, setMessages, (sid) => setChatId(sid));
+
+    const poll = async () => {
+      const rid = runIdRef.current;
+      const offset = offsetRef.current;
+      const handler = handlerRef.current;
+      if (!rid || !handler) return;
+      try {
+        const r = await fetch(`/api/cursor-agent/task/${rid}/output?offset=${offset}`);
+        if (!r.ok) {
+          if (r.status === 404) return;
+          clearStoredRun();
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          return;
+        }
+        const out = await r.json();
+        if (!out.ok) return;
+        const output = String(out.output ?? "");
+        const lines = output.split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            handler.handleEvent(JSON.parse(trimmed));
+          } catch {
+            handler.appendMetaLine(trimmed);
+          }
+        }
+        offsetRef.current = Number(out.nextOffset) || offset;
+        if (sessionIdRef.current && assistantIdRef.current) {
+          saveStoredRun(cwd, sessionIdRef.current, rid, assistantIdRef.current, offsetRef.current);
+        }
+        if (out.ended) {
+          clearStoredRun();
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          handlerRef.current = null;
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    pollIntervalRef.current = setInterval(poll, 600);
+    void poll();
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [cwd, currentSessionId]);
+
   const handleSend = async () => {
     if (!input.trim() || loading) return;
 
-    // Create new session if none exists
     let sessionId = currentSessionId;
     if (!sessionId) {
       sessionId = randomId();
@@ -215,11 +406,9 @@ export function CursorChatPanel({
       setCurrentSessionId(sessionId);
       setChatId(sessionId);
       setSessions((prev) => [newSession, ...prev]);
-      // Persist to database
       createSessionApi(newSession);
     }
 
-    // Add user message
     const userMsg: Message = {
       id: randomId(),
       role: "user",
@@ -238,20 +427,25 @@ export function CursorChatPanel({
     setInput("");
     setLoading(true);
 
-    try {
-      const ac = new AbortController();
-      abortRef.current = ac;
+    stopRequestedRef.current = false;
+    runIdRef.current = null;
+    assistantIdRef.current = assistantId;
+    sessionIdRef.current = sessionId;
+    offsetRef.current = 0;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
 
+    try {
       const resume = chatId || undefined;
-      const resp = await fetch("/api/cursor-agent/stream", {
+      const resp = await fetch("/api/cursor-agent/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: userMsg.content, mode, cwd, force: true, resume }),
-        signal: ac.signal,
       });
 
       if (!resp.ok) {
-        // Try to parse JSON error body if present
         let errText = `请求失败 (${resp.status})`;
         try {
           const j = await resp.json();
@@ -259,130 +453,111 @@ export function CursorChatPanel({
         } catch {}
         throw new Error(errText);
       }
-      if (!resp.body) {
-        throw new Error("缺少响应体（不支持流式传输）");
-      }
 
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let accumulated = "";
-      let toolCount = 0;
+      const data = await resp.json();
+      const runId = data.runId;
+      if (!runId) throw new Error("服务端未返回 runId");
 
-      const appendAssistant = (delta: string) => {
-        if (!delta) return;
-        if (!accumulated.length) delta = delta.replace(/^\n+/, "");
-        if (!delta.length) return;
-        // Cursor CLI may send cumulative content (full text so far); avoid duplicating by replacing when it's a superset
-        if (delta.startsWith(accumulated)) {
-          accumulated = delta;
-        } else {
-          accumulated += delta;
-        }
-        setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
-      };
+      runIdRef.current = runId;
+      saveStoredRun(cwd, sessionId, runId, assistantId, 0);
+      handlerRef.current = buildStreamHandler(assistantId, setMessages, (sid) => setChatId(sid));
 
-      const appendMetaLine = (line: string) => {
-        if (!line) return;
-        // One newline before meta line; avoid extra blank line when content already ends with \n
-        accumulated = accumulated.replace(/\n+$/, "") + (accumulated ? "\n" : "") + line;
-        setMessages((prev) => updateMessageById(prev, assistantId, { content: accumulated }));
-      };
+      const poll = async () => {
+        const rid = runIdRef.current;
+        const offset = offsetRef.current;
+        const handler = handlerRef.current;
+        if (!rid || !handler) return;
 
-      const handleEvent = (evt: any) => {
-        const t = evt?.type;
-        const subtype = evt?.subtype;
-        if (t === "system" && subtype === "init") {
-          const sid = evt?.session_id;
-          if (typeof sid === "string" && sid && sid !== chatId) {
-            setChatId(sid);
-          }
-          return;
-        }
-        if (t === "assistant") {
-          appendAssistant(extractAssistantText(evt));
-          return;
-        }
-        if (t === "tool_call" && subtype === "started") {
-          toolCount += 1;
-          // Try to extract a useful hint (path) but stay resilient.
-          const argsPath =
-            evt?.tool_call?.writeToolCall?.args?.path ??
-            evt?.tool_call?.readToolCall?.args?.path ??
-            evt?.tool_call?.editToolCall?.args?.path ??
-            evt?.tool_call?.applyPatchToolCall?.args?.path;
-          if (typeof argsPath === "string" && argsPath) appendMetaLine(`[工具 #${toolCount}] ${argsPath}`);
-          else appendMetaLine(`[工具 #${toolCount}] 已启动`);
-          return;
-        }
-        if (t === "stderr") {
-          const msg = evt?.message;
-          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[标准错误] ${msg.trim()}`);
-          return;
-        }
-        if (t === "error") {
-          const msg = evt?.message;
-          if (typeof msg === "string" && msg.trim()) appendMetaLine(`[错误] ${msg.trim()}`);
-          return;
-        }
-        if (t === "result") {
-          // End marker from our server wrapper (exitCode/signal/timedOut)
-          const exitCode = evt?.exitCode;
-          const timedOut = evt?.timedOut;
-          const sig = evt?.signal;
-          appendMetaLine(`[完成] 退出码=${exitCode ?? "?"}${sig ? ` 信号=${sig}` : ""}${timedOut ? " 超时=true" : ""}`);
-          return;
-        }
-      };
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        while (true) {
-          const nl = buf.indexOf("\n");
-          if (nl === -1) break;
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          try {
-            handleEvent(JSON.parse(line));
-          } catch {
-            // If server ever sends a non-JSON line, keep it visible.
-            appendMetaLine(line);
-          }
-        }
-      }
-
-      const tail = (buf + decoder.decode()).trim();
-      if (tail) {
         try {
-          handleEvent(JSON.parse(tail));
+          const r = await fetch(`/api/cursor-agent/task/${rid}/output?offset=${offset}`);
+          if (!r.ok) {
+            if (r.status === 404) return;
+            const j = await r.json().catch(() => ({}));
+            setMessages((prev) =>
+              updateMessageById(prev, assistantIdRef.current!, {
+                content: (prev.find((m) => m.id === assistantIdRef.current)?.content || "") + `\n轮询失败: ${j?.error ?? r.status}`,
+              }),
+            );
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            clearStoredRun();
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            return;
+          }
+
+          const out = await r.json();
+          if (!out.ok) return;
+
+          const output = String(out.output ?? "");
+          const lines = output.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              handler.handleEvent(JSON.parse(trimmed));
+            } catch {
+              handler.appendMetaLine(trimmed);
+            }
+          }
+
+          offsetRef.current = Number(out.nextOffset) || offset;
+          if (sessionIdRef.current && assistantIdRef.current) {
+            saveStoredRun(cwd, sessionIdRef.current, rid, assistantIdRef.current, offsetRef.current);
+          }
+
+          if (out.ended) {
+            clearStoredRun();
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            handlerRef.current = null;
+          }
         } catch {
-          appendMetaLine(tail);
+          // ignore network errors, will retry next poll
         }
-      }
+      };
+
+      pollIntervalRef.current = setInterval(poll, 600);
+      void poll();
     } catch (e: any) {
+      clearStoredRun();
       setMessages((prev) =>
         updateMessageById(prev, assistantId, {
           content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n错误: ${e?.message ?? String(e)}`,
         }),
       );
-    } finally {
-      abortRef.current = null;
       setLoading(false);
+      runIdRef.current = null;
+      assistantIdRef.current = null;
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
     }
   };
 
   const handleNewChat = () => {
-    // Abort any in-flight request
-    try {
-      abortRef.current?.abort();
-    } catch {}
-    abortRef.current = null;
+    clearStoredRun();
+    stopRequestedRef.current = true;
+    const rid = runIdRef.current;
+    if (rid) {
+      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+    }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    runIdRef.current = null;
+    assistantIdRef.current = null;
     setLoading(false);
-    
-    // Clear current session state - next send will create a new session
     setCurrentSessionId("");
     setChatId("");
     setMessages([]);
@@ -391,13 +566,19 @@ export function CursorChatPanel({
   };
 
   const handleSelectSession = (session: ChatSession) => {
-    // Abort any in-flight request
-    try {
-      abortRef.current?.abort();
-    } catch {}
-    abortRef.current = null;
+    clearStoredRun();
+    stopRequestedRef.current = true;
+    const rid = runIdRef.current;
+    if (rid) {
+      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+    }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    runIdRef.current = null;
+    assistantIdRef.current = null;
     setLoading(false);
-    
     setCurrentSessionId(session.id);
     setChatId(session.id);
     setMessages(session.messages);
@@ -422,9 +603,12 @@ export function CursorChatPanel({
   };
 
   const handleStop = () => {
-    try {
-      abortRef.current?.abort();
-    } catch {}
+    stopRequestedRef.current = true;
+    const rid = runIdRef.current;
+    if (rid) {
+      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+    }
+    // 不立即清轮询和 loading，让轮询再拉几次以拿到「[完成] 信号=...」再结束
   };
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
