@@ -8,6 +8,7 @@ import { NativeShellManager } from "./nativeShellManager.js";
 import { CodexManager } from "./codexManager.js";
 import { PtyCodexManager } from "./ptyCodexManager.js";
 import { CursorCliManager } from "./cursorCliManager.js";
+import { PtyRestrictedManager } from "./ptyRestrictedManager.js";
 
 function safeJsonParse(text: string): any | null {
   try {
@@ -60,6 +61,11 @@ export function attachTermWs(opts: {
       validateCwd: opts.validateCwd,
       send: (m) => send(ws, m as TermServerMsg),
     });
+    const restrictedPtyMgr = new PtyRestrictedManager({
+      maxSessions: opts.maxSessions,
+      validateCwd: opts.validateCwd,
+      send: (m) => send(ws, m as TermServerMsg),
+    });
     const cursorCliMgr = new CursorCliManager({
       maxSessions: opts.maxSessions,
       validateCwd: opts.validateCwd,
@@ -97,10 +103,29 @@ export function attachTermWs(opts: {
           if (!Number.isFinite(cols) || !Number.isFinite(rows)) return fail("term.open", "Invalid cols/rows");
           const realCwd = await opts.validateCwd(cwd);
           if (mode === "restricted") {
-            const s = term.open(realCwd, cols, rows);
-            send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
-            // greet
-            send(ws, { t: "term.data", sessionId: s.id, data: `$ cd ${s.cwd}\r\n` });
+            try {
+              const s = await restrictedPtyMgr.open(realCwd, cols, rows);
+              send(ws, {
+                t: "term.open.resp",
+                reqId,
+                ok: true,
+                sessionId: s.id,
+                cwd: s.cwd,
+                mode: "restricted-pty",
+              });
+            } catch (e: any) {
+              const s = term.open(realCwd, cols, rows);
+              send(ws, {
+                t: "term.open.resp",
+                reqId,
+                ok: true,
+                sessionId: s.id,
+                cwd: s.cwd,
+                mode: "restricted-exec",
+              });
+              // greet
+              send(ws, { t: "term.data", sessionId: s.id, data: `$ cd ${s.cwd}\r\n` });
+            }
           } else if (mode === "native") {
             const s = nativeMgr.open(realCwd, cols, rows);
             send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
@@ -139,6 +164,7 @@ export function attachTermWs(opts: {
           if (cursorCliMgr.has(sessionId)) cursorCliMgr.close(sessionId);
           else if (codexPtyMgr.has(sessionId)) codexPtyMgr.close(sessionId);
           else if (codexMgr.has(sessionId)) codexMgr.close(sessionId);
+          else if (restrictedPtyMgr.has(sessionId)) restrictedPtyMgr.close(sessionId);
           else if (nativeMgr.has(sessionId)) nativeMgr.close(sessionId);
           else term.close(sessionId);
           send(ws, { t: "term.close.resp", reqId, ok: true });
@@ -155,6 +181,7 @@ export function attachTermWs(opts: {
           if (cursorCliMgr.has(sessionId)) cursorCliMgr.resize(sessionId, cols, rows);
           else if (codexPtyMgr.has(sessionId)) codexPtyMgr.resize(sessionId, cols, rows);
           else if (codexMgr.has(sessionId)) codexMgr.resize(sessionId, cols, rows);
+          else if (restrictedPtyMgr.has(sessionId)) restrictedPtyMgr.resize(sessionId, cols, rows);
           else if (nativeMgr.has(sessionId)) nativeMgr.resize(sessionId, cols, rows);
           else term.resize(sessionId, cols, rows);
           send(ws, { t: "term.resize.resp", reqId, ok: true });
@@ -176,6 +203,8 @@ export function attachTermWs(opts: {
             void codexMgr.stdin(sessionId, dataStr).catch((e: any) => {
               send(ws, { t: "term.data", sessionId, data: `\r\n[error] ${e?.message ?? String(e)}\r\n` });
             });
+          } else if (restrictedPtyMgr.has(sessionId)) {
+            restrictedPtyMgr.stdin(sessionId, dataStr);
           } else if (nativeMgr.has(sessionId)) {
             void nativeMgr.stdin(sessionId, dataStr).catch((e: any) => {
               send(ws, { t: "term.data", sessionId, data: `\r\n[error] ${e?.message ?? String(e)}\r\n` });
@@ -196,7 +225,7 @@ export function attachTermWs(opts: {
 
     ws.on("close", () => {
       // Best-effort: close all sessions when browser disconnects.
-      const managers = [cursorCliMgr, codexMgr, codexPtyMgr];
+      const managers = [cursorCliMgr, codexMgr, codexPtyMgr, restrictedPtyMgr];
       for (const mgr of managers) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -207,6 +236,7 @@ export function attachTermWs(opts: {
               if (mgr === cursorCliMgr) cursorCliMgr.close(k);
               else if (mgr === codexMgr) codexMgr.close(k);
               else if (mgr === codexPtyMgr) codexPtyMgr.close(k);
+              else if (mgr === restrictedPtyMgr) restrictedPtyMgr.close(k);
             });
           }
         } catch {}
@@ -216,4 +246,3 @@ export function attachTermWs(opts: {
 
   return wss;
 }
-

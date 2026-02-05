@@ -58,6 +58,10 @@ function bytes(n: number) {
 
 function languageFromPath(p: string): string | null {
   const lower = p.toLowerCase();
+  const name = baseName(lower);
+  if (name === "dockerfile" || name.startsWith("dockerfile.")) return "dockerfile";
+  if (name === "makefile" || name === "gnumakefile") return "makefile";
+  if (name === ".env" || name.endsWith(".env")) return "dotenv";
   const parts = lower.split(".");
   if (parts.length < 2) return null;
   const ext = parts[parts.length - 1] ?? "";
@@ -70,19 +74,69 @@ function languageFromPath(p: string): string | null {
       return "javascript";
     case "json":
       return "json";
+    case "jsonc":
+      return "json";
+    case "cjs":
+    case "mjs":
+      return "javascript";
     case "css":
       return "css";
+    case "scss":
+    case "sass":
+    case "less":
+      return "scss";
     case "html":
       return "xml";
+    case "xml":
+    case "svg":
+      return "xml";
     case "md":
+      return "markdown";
+    case "mdx":
       return "markdown";
     case "py":
       return "python";
     case "sh":
+    case "bash":
+    case "zsh":
       return "bash";
+    case "ps1":
+      return "powershell";
     case "yml":
     case "yaml":
       return "yaml";
+    case "toml":
+      return "toml";
+    case "ini":
+    case "cfg":
+      return "ini";
+    case "go":
+      return "go";
+    case "rs":
+      return "rust";
+    case "java":
+      return "java";
+    case "kt":
+    case "kts":
+      return "kotlin";
+    case "swift":
+      return "swift";
+    case "rb":
+      return "ruby";
+    case "php":
+      return "php";
+    case "sql":
+      return "sql";
+    case "c":
+    case "h":
+      return "c";
+    case "cc":
+    case "cpp":
+    case "cxx":
+    case "hpp":
+    case "hh":
+    case "hxx":
+      return "cpp";
     default:
       return null;
   }
@@ -124,6 +178,16 @@ function updateNode(tree: TreeNode, targetPath: string, fn: (n: TreeNode) => Tre
   // Only allocate a new object if children changed references.
   const changed = nextChildren.some((c, i) => c !== tree.children![i]);
   return changed ? { ...tree, children: nextChildren } : tree;
+}
+
+function findNode(tree: TreeNode, targetPath: string): TreeNode | null {
+  if (tree.path === targetPath) return tree;
+  if (!tree.children) return null;
+  for (const child of tree.children) {
+    const found = findNode(child, targetPath);
+    if (found) return found;
+  }
+  return null;
 }
 
 function TreeView(props: {
@@ -195,7 +259,7 @@ function TreeView(props: {
           </div>
           {node.type === "dir" ? (
             <button className="dirTermBtn" onClick={() => props.onOpenTerminalDir(node)} title="在此文件夹打开终端">
-              终端
+              Go
             </button>
           ) : null}
         </div>
@@ -231,17 +295,19 @@ export function App() {
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
-  const [topHeight, setTopHeight] = useState(50); // 终端/会话区域高度百分比，与编辑器区域各占一半（保持一致）
+  const [topHeight, setTopHeight] = useState(49); // 终端区域宽度百分比（桌面端左右分栏）
   const [isDraggingVertical, setIsDraggingVertical] = useState(false);
 
   // PC 端三块区域折叠状态（仅桌面端生效）
   const [panelExplorerCollapsed, setPanelExplorerCollapsed] = useState(false);
-  const [panelEditorCollapsed, setPanelEditorCollapsed] = useState(true); // 编辑器默认折叠
+  const [panelEditorCollapsed, setPanelEditorCollapsed] = useState(false); // 编辑器默认展开
   const [panelTerminalCollapsed, setPanelTerminalCollapsed] = useState(false);
 
   const [roots, setRoots] = useState<string[]>([]);
   const [activeRoot, setActiveRoot] = useState("");
   const [tree, setTree] = useState<TreeNode | null>(null);
+  const treeRef = useRef<TreeNode | null>(null);
+  const expandingTreeRef = useRef(false);
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
 
@@ -254,6 +320,7 @@ export function App() {
   const [fileStateByPath, setFileStateByPath] = useState<
     Record<string, { text: string; dirty: boolean; info: { size: number; mtimeMs: number } | null }>
   >({});
+  const restoredRootRef = useRef<string>("");
 
   const activeState = activeFile ? fileStateByPath[activeFile] : undefined;
   const fileText = activeState?.text ?? "";
@@ -266,11 +333,13 @@ export function App() {
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
   const termSessionModeRef = useRef<"restricted" | "codex" | "agent" | "plan" | "ask" | "native" | "">("");
+  const termSessionIsPtyRef = useRef(false);
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
   // Buffer term.data that arrives before term.open.resp (sessionId not set yet) so we don't drop initial output
   const termPendingDataBufferRef = useRef<Map<string, string[]>>(new Map());
   const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
   const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
+  const [restrictedNonce, setRestrictedNonce] = useState(0);
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
   const cursorModeRef = useRef<"agent" | "plan" | "ask">("agent");
   const [cursorCliMode, setCursorCliMode] = useState<"agent" | "plan" | "ask">("agent");
@@ -287,8 +356,95 @@ export function App() {
   const [pasteModalOpen, setPasteModalOpen] = useState(false);
   const [pasteModalText, setPasteModalText] = useState("");
   const pasteModalTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mobileKeysVisible, setMobileKeysVisible] = useState(false);
+  const collapsedPanelWidth = 48;
+  const splitGapPercent = 2;
 
   const terminalVisible = !isMobile || mobileTab === "terminal";
+
+  const sendTermInput = useCallback((data: string) => {
+    const term = termRef.current;
+    const client = termClientRef.current;
+    const sid = termSessionIdRef.current;
+    if (!term || !client) return;
+    if (!sid) {
+      termPendingStdinRef.current += data;
+      return;
+    }
+
+    const isPty = termSessionIsPtyRef.current;
+    if (!isPty) {
+      const isEnter = data === "\r" || data === "\n" || data === "\r\n";
+      if (termModeRef.current === "restricted") {
+        if (data === "\u007f" || data === "\b") {
+          termInputBufRef.current = termInputBufRef.current.slice(0, -1);
+          term.write("\b \b");
+        } else if (isEnter) {
+          const line = termInputBufRef.current.trim();
+          termInputBufRef.current = "";
+          term.write("\r\n");
+          if (line === "codex") {
+            term.write("[启动 codex…]\r\n");
+            setTermMode("codex");
+            return;
+          }
+        } else {
+          termInputBufRef.current += data;
+          term.write(data);
+        }
+      } else {
+        if (data === "\u007f" || data === "\b") term.write("\b \b");
+        else term.write(data);
+      }
+    }
+
+    void client.stdin(sid, data).catch((e) => {
+      if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
+        term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
+      } else {
+        term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
+      }
+    });
+  }, []);
+
+  const handleTermKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (termModeRef.current !== "cursor-cli") return;
+      if (!termSessionIsPtyRef.current) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+      let data: string | null = null;
+      switch (e.key) {
+        case "ArrowUp":
+          data = "\x1b[A";
+          break;
+        case "ArrowDown":
+          data = "\x1b[B";
+          break;
+        case "ArrowLeft":
+          data = "\x1b[D";
+          break;
+        case "ArrowRight":
+          data = "\x1b[C";
+          break;
+        case "Enter":
+          data = "\r";
+          break;
+        case "Backspace":
+          data = "\x7f";
+          break;
+        default:
+          if (e.key.length === 1) data = e.key;
+      }
+
+      if (data) {
+        e.preventDefault();
+        sendTermInput(data);
+      }
+    },
+    [sendTermInput],
+  );
 
   useEffect(() => {
     termModeRef.current = termMode;
@@ -316,6 +472,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!isMobile) return;
+    if (!window.visualViewport) return;
+    const vv = window.visualViewport;
+    const root = document.documentElement;
+    const update = () => {
+      const keyboardOffset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      root.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      root.style.removeProperty("--keyboard-offset");
+    };
+  }, [isMobile]);
+
+  useEffect(() => {
     if (!isDragging) return;
     const onMouseMove = (e: MouseEvent) => {
       const newWidth = e.clientX - 10;
@@ -340,12 +515,12 @@ export function App() {
       const rightPanel = rightPanelRef.current;
       if (!rightPanel) return;
       const rect = rightPanel.getBoundingClientRect();
-      const offsetY = e.clientY - rect.top;
-      const newHeightPercent = (offsetY / rect.height) * 100;
-      // newHeightPercent is the divider position from top (i.e. Editor height %)
-      // We store Terminal height %, so invert it.
-      if (newHeightPercent >= 30 && newHeightPercent <= 80) {
-        setTopHeight(100 - newHeightPercent);
+      const offsetX = e.clientX - rect.left;
+      const newWidthPercent = (offsetX / rect.width) * 100;
+      // newWidthPercent is the divider position from left (i.e. Editor width %)
+      // We store Terminal width %, so invert it.
+      if (newWidthPercent >= 30 && newWidthPercent <= 80) {
+        setTopHeight(100 - newWidthPercent);
       }
     };
     const onMouseUp = () => setIsDraggingVertical(false);
@@ -560,6 +735,10 @@ export function App() {
   }, [terminalCwd]);
 
   useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+
+  useEffect(() => {
     if (!activeRoot) return;
     const rootNode: TreeNode = { path: activeRoot, name: baseName(activeRoot), type: "dir", expanded: true };
     setTree(rootNode);
@@ -581,29 +760,105 @@ export function App() {
     })();
   }, [activeRoot]);
 
+  useEffect(() => {
+    if (!activeRoot || !terminalCwd) return;
+    if (!terminalCwd.startsWith(activeRoot)) return;
+    if (!treeRef.current) return;
+    if (expandingTreeRef.current) return;
+
+    const expandToPath = async () => {
+      expandingTreeRef.current = true;
+      try {
+        const rel = terminalCwd.slice(activeRoot.length).replace(/^\/+/, "");
+        const parts = rel ? rel.split("/") : [];
+        let currentPath = activeRoot;
+
+        for (const part of parts) {
+          currentPath = joinPath(currentPath, part);
+          const currentTree = treeRef.current;
+          if (!currentTree) return;
+          const node = findNode(currentTree, currentPath);
+          if (!node || node.type !== "dir") return;
+
+          if (!node.expanded) {
+            setTree((prev) =>
+              prev
+                ? updateNode(prev, node.path, (n) => ({
+                    ...n,
+                    expanded: true,
+                    loading: n.loaded ? false : true,
+                  }))
+                : prev,
+            );
+          }
+
+          if (!node.loaded) {
+            try {
+              const r = await apiList(node.path);
+              const children: TreeNode[] = r.entries.map((e: FsEntry) => ({
+                path: joinPath(r.path, e.name),
+                name: e.name,
+                type: e.type,
+              }));
+              setTree((prev) =>
+                prev
+                  ? updateNode(prev, node.path, (n) => ({
+                      ...n,
+                      expanded: true,
+                      loading: false,
+                      loaded: true,
+                      children,
+                    }))
+                  : prev,
+              );
+            } catch (e: any) {
+              setStatus(`[error] list: ${e?.message ?? String(e)}`);
+              setTree((prev) =>
+                prev ? updateNode(prev, node.path, (n) => ({ ...n, loading: false })) : prev,
+              );
+              return;
+            }
+          }
+        }
+      } finally {
+        expandingTreeRef.current = false;
+      }
+    };
+
+    void expandToPath();
+  }, [activeRoot, terminalCwd]);
+
   // Restore last opened file from SQLite when activeRoot changes
   useEffect(() => {
     if (!activeRoot) return;
+    if (restoredRootRef.current === activeRoot && (openTabs.length > 0 || activeFile)) return;
     let cancelled = false;
+    const restoreFromPath = async (path: string) => {
+      if (!path.startsWith(activeRoot)) return;
+      const r = await apiRead(path);
+      if (cancelled) return;
+      setOpenTabs((prev) => (prev.includes(r.path) ? prev : [r.path]));
+      setActiveFile(r.path);
+      setFileStateByPath((prev) => ({
+        ...prev,
+        [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
+      }));
+      setEditorMode("edit");
+    };
+
     apiGetLastOpenedFile(activeRoot)
       .then((res) => {
-        if (cancelled || !res.filePath) return;
-        const path = res.filePath;
-        if (!path.startsWith(activeRoot)) return;
-        return apiRead(path).then((r) => {
-          if (cancelled) return;
-          setOpenTabs((prev) => (prev.includes(r.path) ? prev : [r.path]));
-          setActiveFile(r.path);
-          setFileStateByPath((prev) => ({
-            ...prev,
-            [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
-          }));
-          setEditorMode("edit");
-        });
+        if (cancelled) return;
+        restoredRootRef.current = activeRoot;
+        if (res.filePath) return restoreFromPath(res.filePath);
+        const fallback = localStorage.getItem(`vibego:lastOpenedFile:${activeRoot}`);
+        if (fallback) return restoreFromPath(fallback);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
-  }, [activeRoot]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoot, activeFile, openTabs.length]);
 
   const toggleDir = async (node: TreeNode) => {
     // Collapse
@@ -654,6 +909,9 @@ export function App() {
         [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
       }));
       if (activeRoot) apiSetLastOpenedFile(activeRoot, r.path).catch(() => {});
+      if (activeRoot) {
+        localStorage.setItem(`vibego:lastOpenedFile:${activeRoot}`, r.path);
+      }
     } catch (e: any) {
       setStatus(`[错误] 读取: ${e?.message ?? String(e)}`);
     }
@@ -845,9 +1103,8 @@ export function App() {
             }
           }
         } else {
-          // Only buffer for Codex: server sends welcome before open.resp. For Cursor CLI we don't buffer,
-          // so we never flush cursor output — avoids duplicate when nudge triggers TUI redraw.
-          if (termModeRef.current === "codex") {
+          // Buffer for Codex and Cursor CLI in case output arrives before open.resp.
+          if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
             if (!termPendingDataBufferRef.current.has(sid)) termPendingDataBufferRef.current.set(sid, []);
             termPendingDataBufferRef.current.get(sid)!.push(m.data);
           }
@@ -861,13 +1118,27 @@ export function App() {
         if (sessionMode === "codex") {
           termSessionIdRef.current = "";
           termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[codex 已退出 ${m.code ?? "?"}]\r\n`);
-        } else if (sessionMode === "agent" || sessionMode === "plan" || sessionMode === "ask") {
+        } else if (
+          sessionMode === "agent" ||
+          sessionMode === "plan" ||
+          sessionMode === "ask" ||
+          sessionMode === "cursor-cli-agent" ||
+          sessionMode === "cursor-cli-plan" ||
+          sessionMode === "cursor-cli-ask"
+        ) {
           termSessionIdRef.current = "";
           termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[cursor-cli 已退出 ${m.code ?? "?"}]\r\n`);
+        } else if (sessionMode === "restricted" && termSessionIsPtyRef.current) {
+          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
+          term.write(`\r\n[restricted PTY 已退出 ${m.code ?? "?"}]\r\n`);
         } else {
           // restricted mode: command finished, but session stays open for more commands
           term.write(`$ `);
@@ -887,46 +1158,7 @@ export function App() {
       });
 
     term.onData((data) => {
-      const sid = termSessionIdRef.current;
-      if (!sid) {
-        // Session is still opening; buffer keystrokes so user can type immediately after switching modes.
-        termPendingStdinRef.current += data;
-        return;
-      }
-      // Local echo with basic editing (server doesn't echo input back).
-      // Also: in restricted mode, typing `codex` + Enter will switch to codex mode.
-      const isEnter = data === "\r" || data === "\n" || data === "\r\n";
-      if (termModeRef.current === "restricted") {
-        if (data === "\u007f" || data === "\b") {
-          termInputBufRef.current = termInputBufRef.current.slice(0, -1);
-          term.write("\b \b");
-        } else if (isEnter) {
-          const line = termInputBufRef.current.trim();
-          termInputBufRef.current = "";
-          term.write("\r\n");
-          if (line === "codex") {
-            term.write("[启动 codex…]\r\n");
-            setTermMode("codex");
-            return; // don't send to restricted backend
-          }
-        } else {
-          termInputBufRef.current += data;
-          term.write(data);
-        }
-      } else if (termModeRef.current === "codex" || termModeRef.current === "cursor" || termModeRef.current === "cursor-cli") {
-        // In PTY TUI mode (codex/cursor/cursor-cli), the remote process echoes input itself.
-      } else {
-        // native: echo locally (server doesn't echo input)
-        if (data === "\u007f" || data === "\b") term.write("\b \b");
-        else term.write(data);
-      }
-      void client.stdin(sid, data).catch((e) => {
-        if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
-          term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
-        } else {
-          term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
-        }
-      });
+      sendTermInput(data);
     });
 
     // Fit on container resize (more reliable than window resize in mobile browsers).
@@ -943,7 +1175,7 @@ export function App() {
       // Intentionally do NOT dispose on tab switches; only mark disposed for connect() continuation.
       disposed = true;
     };
-  }, [safeFitTerm, terminalVisible, termMode]);
+  }, [safeFitTerm, terminalVisible, termMode, sendTermInput]);
 
   // When switching to Codex/Restricted (including Cursor→Codex again), the xterm container may have been hidden.
   // Trigger fit + backend resize; multiple delayed fits so layout and renderer are ready.
@@ -1006,6 +1238,7 @@ export function App() {
       termClientRef.current = null;
       termSessionIdRef.current = "";
       termInitedRef.current = false;
+      termSessionIsPtyRef.current = false;
     };
   }, []);
 
@@ -1022,7 +1255,8 @@ export function App() {
 
     const openKey =
       `${terminalCwd}::${termMode}` +
-      (termMode === "cursor-cli" ? `::${cursorCliMode}` : "");
+      (termMode === "cursor-cli" ? `::${cursorCliMode}` : "") +
+      (termMode === "restricted" ? `::r${restrictedNonce}` : "");
 
     // Only reopen if we don't already have the correct session open.
     if (termSessionIdRef.current && lastOpenKeyRef.current === openKey) {
@@ -1038,23 +1272,36 @@ export function App() {
           const old = termSessionIdRef.current;
           termSessionIdRef.current = "";
           termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
           lastOpenKeyRef.current = "";
           logTerm("closing previous session", { old });
           await client.closeSession(old).catch(() => {});
         }
         
         // Determine actual mode for WebSocket
-        // Map cursor-cli modes to the backend modes: agent, plan, ask
-        let actualMode: "restricted" | "native" | "codex" | "agent" | "plan" | "ask";
+        // Map cursor-cli modes to the backend modes: cursor-cli-agent/plan/ask
+        let actualMode:
+          | "restricted"
+          | "native"
+          | "codex"
+          | "agent"
+          | "plan"
+          | "ask"
+          | "cursor-cli-agent"
+          | "cursor-cli-plan"
+          | "cursor-cli-ask";
         if (termMode === "cursor-cli") {
-          actualMode = cursorCliMode; // cursorCliMode is already "agent" | "plan" | "ask"
+          actualMode = `cursor-cli-${cursorCliMode}` as
+            | "cursor-cli-agent"
+            | "cursor-cli-plan"
+            | "cursor-cli-ask";
         } else {
           actualMode = termMode; // termMode here is "restricted" | "codex"
         }
         logTerm("actualMode", { actualMode });
         
-        // Reset terminal when switching into codex/cursor-cli mode to avoid polluting the TUI.
-        if (termMode === "codex" || termMode === "cursor-cli") {
+        // Reset terminal when switching into codex/cursor-cli/restricted to avoid mixing outputs.
+        if (termMode === "codex" || termMode === "cursor-cli" || termMode === "restricted") {
           term.reset();
         } else {
           term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
@@ -1064,6 +1311,16 @@ export function App() {
         if (!resp.ok || !resp.sessionId) throw new Error(resp.error ?? "term.open failed");
         termSessionIdRef.current = resp.sessionId;
         termSessionModeRef.current = actualMode;
+        const isPtySession =
+          actualMode === "codex" ||
+          actualMode === "agent" ||
+          actualMode === "plan" ||
+          actualMode === "ask" ||
+          actualMode === "cursor-cli-agent" ||
+          actualMode === "cursor-cli-plan" ||
+          actualMode === "cursor-cli-ask" ||
+          (actualMode === "restricted" && resp.mode === "restricted-pty");
+        termSessionIsPtyRef.current = isPtySession;
         lastOpenKeyRef.current = openKey;
         cursorPromptNudgedRef.current = false;
         // Flush any term.data that arrived before term.open.resp (e.g. Codex welcome / PTY hint)
@@ -1090,7 +1347,7 @@ export function App() {
           await client.stdin(resp.sessionId, pending).catch(() => {});
         }
 
-        if (termMode !== "codex" && termMode !== "cursor-cli") term.write("$ ");
+        if (!isPtySession && termMode !== "codex" && termMode !== "cursor-cli") term.write("$ ");
       } catch (e: any) {
         lastOpenKeyRef.current = "";
           setStatus(`[错误] 终端: ${e?.message ?? String(e)}`);
@@ -1145,17 +1402,7 @@ export function App() {
           }}
         >
           <div className="panelHeader">
-            {!isMobile && (
-              <button
-                type="button"
-                className="panelCollapseBtn"
-                onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
-                title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
-              >
-                {panelExplorerCollapsed ? "▶" : "◀"}
-              </button>
-            )}
-            <h2>资源管理器</h2>
+            <h2>Files</h2>
             {!isMobile && panelExplorerCollapsed && (
               <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
             )}
@@ -1182,6 +1429,16 @@ export function App() {
                   ))}
                 </select>
               </div>
+            )}
+            {!isMobile && (
+              <button
+                type="button"
+                className="panelCollapseBtn"
+                onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
+                title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
+              >
+                {panelExplorerCollapsed ? "▶" : "◀"}
+              </button>
             )}
           </div>
           <div className="panelBody">
@@ -1218,12 +1475,24 @@ export function App() {
               (!isMobile && panelEditorCollapsed ? " panelCollapsed panelVerticalCollapsed" : "")
             }
             style={{
-              flex: isMobile ? 1 : panelEditorCollapsed ? undefined : 1,
-              height: isMobile ? undefined : panelEditorCollapsed ? undefined : `${100 - topHeight}%`,
-              minHeight: isMobile ? undefined : panelEditorCollapsed ? undefined : 0,
+              flex: isMobile
+                ? 1
+                : panelEditorCollapsed
+                  ? `0 0 ${collapsedPanelWidth}px`
+                  : panelTerminalCollapsed
+                    ? 1
+                    : `0 0 ${Math.max(0, 100 - topHeight - splitGapPercent)}%`,
+              width: isMobile
+                ? undefined
+                : panelEditorCollapsed
+                  ? `${collapsedPanelWidth}px`
+                  : panelTerminalCollapsed
+                    ? undefined
+                    : `${Math.max(0, 100 - topHeight - splitGapPercent)}%`,
+              minWidth: isMobile ? undefined : panelEditorCollapsed ? collapsedPanelWidth : 0,
             }}
           >
-            {openTabs.length ? (
+            {!panelEditorCollapsed ? (
               <div className="tabStrip" role="tablist" aria-label="已打开文件">
                 {openTabs.map((p) => {
                   const isActive = p === activeFile;
@@ -1264,44 +1533,61 @@ export function App() {
                     </div>
                   );
                 })}
+                {!isMobile && (
+                  <div className="row" style={{ marginLeft: "auto" }}>
+                    <button
+                      type="button"
+                      className="panelCollapseBtn"
+                      onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
+                      title="向左折叠编辑器"
+                    >
+                      ◀
+                    </button>
+                  </div>
+                )}
               </div>
             ) : null}
 
             <div className="panelHeader">
-              {!isMobile && (
+              <h2>编辑器</h2>
+              {!isMobile && panelEditorCollapsed ? (
+                <span className="collapsedLabel">编辑器</span>
+              ) : null}
+              {!isMobile && panelEditorCollapsed ? (
                 <button
                   type="button"
                   className="panelCollapseBtn"
-                  onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
-                  title={panelEditorCollapsed ? "展开编辑器" : "向上折叠编辑器"}
+                  onClick={() => setPanelEditorCollapsed(false)}
+                  title="展开编辑器"
                 >
-                  {panelEditorCollapsed ? "↓" : "↑"}
+                  ▶
                 </button>
-              )}
-              <h2>编辑器</h2>
-              <div className="row" style={{ marginLeft: "auto" }}>
-                <div className="segmented" aria-label="编辑器模式">
-                  <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
-                    编辑
-                  </button>
-                  <button
-                    className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
-                    onClick={() => setEditorMode("preview")}
-                    disabled={!activeFile}
-                    title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
-                  >
-                    预览
+              ) : null}
+              <span className="fileMeta" title={activeFile}>
+                {activeFile ? baseName(activeFile) : "(无文件)"}
+                {dirty ? " *" : ""}
+              </span>
+              {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
+              {!panelEditorCollapsed ? (
+                <div className="row" style={{ marginLeft: "auto" }}>
+                  <div className="segmented" aria-label="编辑器模式">
+                    <button className={"segBtn" + (editorMode === "edit" ? " segBtnActive" : "")} onClick={() => setEditorMode("edit")}>
+                      编辑
+                    </button>
+                    <button
+                      className={"segBtn" + (editorMode === "preview" ? " segBtnActive" : "")}
+                      onClick={() => setEditorMode("preview")}
+                      disabled={!activeFile}
+                      title={!activeFile ? "请先打开文件" : "使用 highlight.js 预览"}
+                    >
+                      预览
+                    </button>
+                  </div>
+                  <button className="segBtn" onClick={save} disabled={!activeFile || !dirty}>
+                    保存
                   </button>
                 </div>
-                <span className="fileMeta" title={activeFile}>
-                  {activeFile ? baseName(activeFile) : "(无文件)"}
-                  {dirty ? " *" : ""}
-                </span>
-                {fileInfo ? <span className="fileMeta">{bytes(fileInfo.size)}</span> : null}
-                <button className="btn" onClick={save} disabled={!activeFile || !dirty}>
-                  保存
-                </button>
-              </div>
+              ) : null}
             </div>
             <div className="panelBody" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
               {editorMode === "preview" && activeFile ? (
@@ -1329,6 +1615,7 @@ export function App() {
                       wordWrap: "on",
                       scrollBeyondLastLine: false,
                       smoothScrolling: true,
+                      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
                     }}
                   />
                 </div>
@@ -1346,14 +1633,34 @@ export function App() {
               (!isMobile && panelTerminalCollapsed ? " panelCollapsed panelVerticalCollapsed" : "")
             }
             style={{
-              flex: isMobile ? 1 : panelTerminalCollapsed ? undefined : 1,
-              height: isMobile ? undefined : panelTerminalCollapsed ? undefined : `${topHeight}%`,
-              minHeight: isMobile ? "65dvh" : panelTerminalCollapsed ? undefined : 0,
+              flex: isMobile
+                ? 1
+                : panelTerminalCollapsed
+                  ? `0 0 ${collapsedPanelWidth}px`
+                  : panelEditorCollapsed
+                    ? 1
+                    : `0 0 ${topHeight}%`,
+              width: isMobile
+                ? undefined
+                : panelTerminalCollapsed
+                  ? `${collapsedPanelWidth}px`
+                  : panelEditorCollapsed
+                    ? undefined
+                    : `${topHeight}%`,
+              minWidth: isMobile
+                ? undefined
+                : panelTerminalCollapsed
+                  ? collapsedPanelWidth
+                  : termMode === "cursor-cli"
+                    ? 520
+                    : 0,
+              minHeight: isMobile ? "65dvh" : undefined,
             }}
           >
+            {!panelTerminalCollapsed ? (
             <div className="workspaceTabStrip">
               {workspaces.length === 0 ? (
-                <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
+                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
               ) : (
                 workspaces.map((ws) => (
                   <div
@@ -1376,28 +1683,44 @@ export function App() {
                   </div>
                 ))
               )}
-            </div>
-            <div className="panelHeader termPanelHeader">
-              <div className="termPanelHeaderRow">
-                {!isMobile && (
+              {!isMobile && (
+                <div className="row" style={{ marginLeft: "auto" }}>
                   <button
                     type="button"
                     className="panelCollapseBtn"
                     onClick={() => setPanelTerminalCollapsed(!panelTerminalCollapsed)}
-                    title={panelTerminalCollapsed ? "展开终端" : "向下折叠终端"}
+                    title={panelTerminalCollapsed ? "展开终端" : "向右折叠终端"}
                   >
-                    {panelTerminalCollapsed ? "↑" : "↓"}
+                    {panelTerminalCollapsed ? "◀" : "▶"}
                   </button>
-                )}
-                <h2>终端</h2>
-                <div className="segmented" aria-label="终端模式">
-                  <button
-                    className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
-                    onClick={() => setTermMode("cursor")}
-                    title="Cursor AI（非交互模式）"
-                  >
-                    Cursor
-                  </button>
+                </div>
+              )}
+            </div>
+            ) : null}
+            <div className="panelHeader termPanelHeader">
+              {!isMobile && panelTerminalCollapsed ? (
+                <span className="collapsedLabel">终端</span>
+              ) : null}
+              {!isMobile && panelTerminalCollapsed ? (
+                <button
+                  type="button"
+                  className="panelCollapseBtn"
+                  onClick={() => setPanelTerminalCollapsed(false)}
+                  title="展开终端"
+                >
+                  ◀
+                </button>
+              ) : null}
+              {!panelTerminalCollapsed ? (
+                <div className="termPanelHeaderRow">
+                  <div className="segmented" aria-label="终端模式">
+                    <button
+                      className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
+                      onClick={() => setTermMode("cursor")}
+                      title="Cursor AI（非交互模式）"
+                    >
+                      Cursor
+                    </button>
                   <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
                     setTermMode("codex");
                     termRef.current?.focus();
@@ -1405,7 +1728,15 @@ export function App() {
                   }}>
                     Codex
                   </button>
+                  <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("cursor-cli");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    Cursor CLI
+                  </button>
                   <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
+                    setRestrictedNonce((n) => n + 1);
                     setTermMode("restricted");
                     termRef.current?.focus();
                     setTimeout(() => termRef.current?.focus(), 50);
@@ -1413,30 +1744,50 @@ export function App() {
                     Restricted
                   </button>
                 </div>
-                {(termMode === "codex" || termMode === "restricted") && (
-                  <button
-                    type="button"
-                    className="termPasteBtn"
-                    title="粘贴到终端"
-                    onClick={() => {
-                      const sid = termSessionIdRef.current;
-                      const client = termClientRef.current;
-                      if (!sid || !client) return;
-                      setPasteModalText("");
-                      setPasteModalOpen(true);
-                      setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
-                    }}
-                  >
-                    粘贴
-                  </button>
-                )}
-              </div>
+                  <div className="row" style={{ marginLeft: "auto" }}>
+                    {(termMode === "codex" || termMode === "restricted") && (
+                      <button
+                        type="button"
+                        className="termPasteBtn"
+                        title="粘贴到终端"
+                        onClick={() => {
+                          const sid = termSessionIdRef.current;
+                          const client = termClientRef.current;
+                          if (!sid || !client) return;
+                          setPasteModalText("");
+                          setPasteModalOpen(true);
+                          setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
+                        }}
+                      >
+                        粘贴
+                      </button>
+                    )}
+                    {isMobile && termMode !== "cursor" ? (
+                      <button
+                        type="button"
+                        className="termPasteBtn"
+                        title={mobileKeysVisible ? "隐藏方向键" : "显示方向键"}
+                        onClick={() => setMobileKeysVisible((v) => !v)}
+                      >
+                        {mobileKeysVisible ? "键盘" : "方向键"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               <div className="termPanelHeaderCwd" title={terminalCwd}>
                 {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
               </div>
             </div>
             <div
-              className="termAreaWrap"
+              className={
+                "termAreaWrap" +
+                (isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible
+                  ? " termAreaWrapWithKeys"
+                  : "")
+              }
+              tabIndex={0}
+              onKeyDown={handleTermKeyDown}
               style={{
                 flex: 1,
                 minHeight: 0,
@@ -1475,9 +1826,68 @@ export function App() {
                 onMouseDown={() => termRef.current?.focus()}
                 onTouchStart={() => termRef.current?.focus()}
               />
+              {isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible ? (
+                <div className="termMobileKeys">
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[A");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[B");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Down
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[D");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Left
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[C");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Right
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn termMobileKeyEnter"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\r");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Enter
+                  </button>
+                </div>
+              ) : null}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
       </div>
 
       {/* 移动端 */}
@@ -1525,49 +1935,59 @@ export function App() {
             className={"panel" + (isMobile && mobileTab !== "editor" ? " hidden" : "")}
             style={{ flex: 1 }}
           >
-            {openTabs.length ? (
-              <div className="tabStrip" role="tablist" aria-label="已打开文件">
-                {openTabs.map((p) => {
-                  const isActive = p === activeFile;
-                  const isDirty = fileStateByPath[p]?.dirty;
-                  return (
-                    <div
-                      key={p}
-                      className={"fileTab" + (isActive ? " fileTabActive" : "")}
-                      role="tab"
-                      aria-selected={isActive}
-                      tabIndex={0}
-                      title={p}
-                      onClick={() => {
+            <div className="tabStrip" role="tablist" aria-label="已打开文件">
+              {openTabs.map((p) => {
+                const isActive = p === activeFile;
+                const isDirty = fileStateByPath[p]?.dirty;
+                return (
+                  <div
+                    key={p}
+                    className={"fileTab" + (isActive ? " fileTabActive" : "")}
+                    role="tab"
+                    aria-selected={isActive}
+                    tabIndex={0}
+                    title={p}
+                    onClick={() => {
+                      setActiveFile(p);
+                      if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
                         setActiveFile(p);
                         if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
+                      }
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {baseName(p)}
+                      {isDirty ? " •" : ""}
+                    </span>
+                    <button
+                      className="tabClose"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(p);
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          setActiveFile(p);
-                          if (activeRoot) apiSetLastOpenedFile(activeRoot, p).catch(() => {});
-                        }
-                      }}
+                      aria-label={`关闭 ${baseName(p)}`}
                     >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {baseName(p)}
-                        {isDirty ? " •" : ""}
-                      </span>
-                      <button
-                        className="tabClose"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeTab(p);
-                        }}
-                        aria-label={`关闭 ${baseName(p)}`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+              {!isMobile && (
+                <div className="row" style={{ marginLeft: "auto" }}>
+                  <button
+                    type="button"
+                    className="panelCollapseBtn"
+                    onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
+                    title={panelEditorCollapsed ? "展开编辑器" : "向左折叠编辑器"}
+                  >
+                    {panelEditorCollapsed ? "▶" : "◀"}
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="panelHeader">
               <h2>编辑器</h2>
               <div className="row" style={{ marginLeft: "auto" }}>
@@ -1619,6 +2039,7 @@ export function App() {
                     wordWrap: "on",
                     scrollBeyondLastLine: false,
                     smoothScrolling: true,
+                    scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
                   }}
                 />
               </div>
@@ -1631,7 +2052,7 @@ export function App() {
           >
             <div className="workspaceTabStrip">
               {workspaces.length === 0 ? (
-                <div className="workspaceEmpty">点击文件夹的「终端」按钮打开工作区</div>
+                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
               ) : (
                 workspaces.map((ws) => (
                   <div
@@ -1669,7 +2090,13 @@ export function App() {
                   <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => setTermMode("codex")}>
                     Codex
                   </button>
-                  <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => setTermMode("restricted")}>
+                  <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => setTermMode("cursor-cli")}>
+                    Cursor CLI
+                  </button>
+                  <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
+                    setRestrictedNonce((n) => n + 1);
+                    setTermMode("restricted");
+                  }}>
                     Restricted
                   </button>
                 </div>
@@ -1696,7 +2123,14 @@ export function App() {
               </div>
             </div>
             <div
-              className="termAreaWrap"
+              className={
+                "termAreaWrap" +
+                (isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible
+                  ? " termAreaWrapWithKeys"
+                  : "")
+              }
+              tabIndex={0}
+              onKeyDown={handleTermKeyDown}
               style={{
                 flex: 1,
                 minHeight: 0,
@@ -1735,6 +2169,65 @@ export function App() {
                 onMouseDown={() => termRef.current?.focus()}
                 onTouchStart={() => termRef.current?.focus()}
               />
+              {isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible ? (
+                <div className="termMobileKeys">
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[A");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[B");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Down
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[D");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Left
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\x1b[C");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Right
+                  </button>
+                  <button
+                    type="button"
+                    className="termMobileKeyBtn termMobileKeyEnter"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      sendTermInput("\r");
+                      termRef.current?.focus();
+                    }}
+                  >
+                    Enter
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

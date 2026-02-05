@@ -16,7 +16,7 @@ export type TermOpenReq = {
   cwd: string; 
   cols?: number; 
   rows?: number;
-  mode?: "restricted" | "native" | "codex" | "agent" | "plan" | "ask";
+  mode?: "restricted" | "native" | "codex" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
   options?: {
     prompt?: string;
     resume?: string;
@@ -43,4 +43,3 @@ export type TermExitEvt = { t: "term.exit"; sessionId: string; code?: number };
 
 export type TermClientMsg = TermOpenReq | TermStdinReq | TermResizeReq | TermCloseReq;
 export type TermServerMsg = TermOpenResp | TermStdinResp | TermResizeResp | TermCloseResp | TermDataEvt | TermExitEvt;
-

@@ -89,7 +89,7 @@ export class TermClient {
     cwd: string, 
     cols: number, 
     rows: number, 
-    mode?: "restricted" | "native" | "codex" | "agent" | "plan" | "ask",
+    mode?: "restricted" | "native" | "codex" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask",
     options?: {
       prompt?: string;
       resume?: string;
@@ -157,4 +157,3 @@ export class TermClient {
     }
   }
 }
-

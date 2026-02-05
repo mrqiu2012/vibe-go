@@ -68,12 +68,12 @@ input {
 }
 
 .resizerVertical {
-  height: 2px;
-  cursor: row-resize;
+  width: 2px;
+  cursor: col-resize;
   background: transparent;
   flex-shrink: 0;
   position: relative;
-  margin: 4px 0;
+  margin: 0 4px;
 }
 
 .resizerVertical:hover {
@@ -223,8 +223,35 @@ input {
 /* 编辑器/终端折叠后只占一行标题栏高度，不覆盖 .panelHeader 样式；min-height 防止在 flex 中被压成 0 */
 .panel.panelCollapsed.panelVerticalCollapsed {
   flex: 0 0 auto;
-  height: auto;
-  min-height: 44px;
+  width: 44px;
+  min-width: 44px;
+}
+
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader {
+  flex-direction: column;
+  padding: 8px 6px;
+  gap: 4px;
+}
+
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader h2,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .row,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .segmented,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .fileMeta,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .btn,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .termPanelHeaderRow,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .termPanelHeaderCwd,
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .termPasteBtn {
+  display: none !important;
+}
+
+.panel.panelCollapsed.panelVerticalCollapsed .panelHeader .panelCollapseBtn {
+  display: inline-flex;
+}
+
+.collapsedLabel {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .panel.panelCollapsed.panelVerticalCollapsed .termPanelHeaderCwd {
@@ -245,12 +272,14 @@ input {
 
 .tabStrip {
   display: flex;
+  align-items: center;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  min-height: 42px;
   flex-shrink: 0;
   -webkit-overflow-scrolling: touch;
 }
@@ -456,7 +485,7 @@ input {
 
 .right {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0;
   min-height: 0;
   min-width: 0;
@@ -662,6 +691,51 @@ input {
 .termPaneActive {
   opacity: 1;
   pointer-events: auto;
+}
+
+.termAreaWrapWithKeys .termPane {
+  bottom: calc(48px + var(--keyboard-offset, 0px));
+}
+
+.termMobileKeys {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--keyboard-offset, 0px) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.termMobileKeyBtn {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  user-select: none;
+}
+
+.termMobileKeyBtn:active {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.termMobileKeyEnter {
+  flex: 1.4;
+}
+
+@media (min-width: 901px) {
+  .termMobileKeys {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1227,6 +1301,7 @@ input {
   padding: 12px;
   border-top: 1px solid var(--border);
   display: flex;
+  align-items: center;
   gap: 8px;
   background: var(--panel);
   flex-shrink: 0;
@@ -1265,7 +1340,7 @@ input {
   cursor: pointer;
   font-weight: 600;
   transition: background 180ms ease, transform 100ms ease;
-  align-self: flex-end;
+  align-self: center;
 }
 
 .sendBtn:hover:not(:disabled) {
@@ -1532,12 +1607,13 @@ input {
 .workspaceTabStrip {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 6px 8px;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   overflow-y: hidden;
+  min-height: 42px;
   flex-shrink: 0;
   -webkit-overflow-scrolling: touch;
 }
