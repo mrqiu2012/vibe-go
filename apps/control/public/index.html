@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VibeGo 控制面板</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1a1a2e;
+        color: #eee;
+      }
+      .card {
+        background: #16213e;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        text-align: center;
+        max-width: 360px;
+      }
+      h1 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+      p { margin: 0 0 1.5rem; color: #aaa; font-size: 0.9rem; }
+      button {
+        background: #0f3460;
+        color: #fff;
+        border: none;
+        padding: 12px 24px;
+        font-size: 1rem;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #1a4a7a; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .status { margin-top: 1rem; font-size: 0.9rem; min-height: 1.5em; }
+      .status.success { color: #6ee7b7; }
+      .status.error { color: #f87171; }
+      .ports {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+      }
+      .port-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        background: rgba(0,0,0,0.2);
+        border-radius: 8px;
+        font-size: 0.9rem;
+      }
+      .port-item .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #666;
+      }
+      .port-item.running .dot { background: #6ee7b7; box-shadow: 0 0 6px #6ee7b7; }
+      .port-item.stopped .dot { background: #f87171; }
+      .port-item.loading .dot { background: #fbbf24; animation: pulse 0.8s ease infinite; }
+      @keyframes pulse { 50% { opacity: 0.5; } }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>VibeGo 控制面板</h1>
+      <p>启动状态</p>
+      <div class="ports">
+        <div class="port-item loading" id="port-3989">
+          <span class="dot"></span>
+          <span>前端 3989</span>
+          <span id="label-3989">检测中…</span>
+        </div>
+        <div class="port-item loading" id="port-3990">
+          <span class="dot"></span>
+          <span>后端 3990</span>
+          <span id="label-3990">检测中…</span>
+        </div>
+      </div>
+      <p style="margin-bottom: 1rem;">点击下方按钮将重启本项目的开发服务</p>
+      <button type="button" id="restart">重启项目</button>
+      <div class="status" id="status"></div>
+    </div>
+    <script>
+      const btn = document.getElementById("restart");
+      const status = document.getElementById("status");
+      const port3989 = document.getElementById("port-3989");
+      const port3990 = document.getElementById("port-3990");
+      const label3989 = document.getElementById("label-3989");
+      const label3990 = document.getElementById("label-3990");
+
+      function setPortUi(portEl, labelEl, running) {
+        portEl.className = "port-item " + (running ? "running" : "stopped");
+        labelEl.textContent = running ? "运行中" : "未启动";
+      }
+
+      async function refreshStatus() {
+        port3989.className = "port-item loading";
+        port3990.className = "port-item loading";
+        label3989.textContent = "检测中…";
+        label3990.textContent = "检测中…";
+        try {
+          const res = await fetch("/api/status");
+          const data = await res.json();
+          if (data.ok) {
+            setPortUi(port3989, label3989, data.frontend);
+            setPortUi(port3990, label3990, data.backend);
+            if (data.frontend && data.backend) {
+              status.textContent = "";
+              status.className = "status";
+            }
+          }
+        } catch (e) {
+          label3989.textContent = "—";
+          label3990.textContent = "—";
+        }
+      }
+
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        status.textContent = "正在执行重启…";
+        status.className = "status";
+
+        try {
+          const res = await fetch("/api/restart", { method: "POST" });
+          const data = await res.json();
+          if (data.ok) {
+            status.textContent = data.message || "重启已触发";
+            status.className = "status success";
+            setTimeout(refreshStatus, 2000);
+          } else {
+            status.textContent = data.error || "请求失败";
+            status.className = "status error";
+          }
+        } catch (e) {
+          status.textContent = "请求失败: " + e.message;
+          status.className = "status error";
+        }
+
+        btn.disabled = false;
+      });
+    </script>
+  </body>
+</html>

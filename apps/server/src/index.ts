@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 import express from "express";
 import type { Response } from "express";
 import cors from "cors";
@@ -12,7 +13,7 @@ import { loadConfig } from "./config.js";
 import { normalizeRoots, validatePathInRoots } from "./pathGuard.js";
 import { listDir, readTextFile, writeTextFile } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
-import { executeCursorAgent, spawnCursorAgentStream } from "./cursorAgent.js";
+import { executeCursorAgent, spawnCursorAgentStream, listCursorModels } from "./cursorAgent.js";
 import {
   getAllSessions,
   getSession,
@@ -65,7 +66,7 @@ async function main() {
   // Check for Cursor Agent CLI availability
   await checkAgentCli();
 
-  const port = Number(cfg.server?.port ?? process.env.PORT ?? 3005);
+  const port = Number(cfg.server?.port ?? process.env.PORT ?? 3990);
   const timeoutSec = cfg.limits?.timeoutSec ?? 900;
   const maxOutputKB = cfg.limits?.maxOutputKB ?? 1024;
   const maxSessions = cfg.limits?.maxSessions ?? 4;
@@ -78,12 +79,13 @@ async function main() {
   const allowedOrigin = (origin: string | undefined) => {
     // Allow same-machine tools with no Origin (curl, etc.)
     if (!origin) return true;
-    if (origin === "http://localhost:5173") return true;
-    if (origin === "http://127.0.0.1:5173") return true;
+    // Allow localhost and 127.0.0.1
+    if (origin === "http://localhost:3989") return true;
+    if (origin === "http://127.0.0.1:3989") return true;
     if (origin === `http://localhost:${port}`) return true;
     if (origin === `http://127.0.0.1:${port}`) return true;
-    // Allow LAN access to Vite dev server
-    if (/^http:\/\/(\d{1,3}\.){3}\d{1,3}:5173$/.test(origin)) return true;
+    // Allow LAN access (any IP address on ports 3989 or backend port)
+    if (/^http:\/\/(\d{1,3}\.){3}\d{1,3}:(3989|3990)$/.test(origin)) return true;
     return false;
   };
   app.use(
@@ -150,20 +152,30 @@ async function main() {
     }
   });
 
+  app.get("/api/cursor-agent/models", async (_req, res) => {
+    try {
+      const models = await listCursorModels();
+      res.json({ ok: true, models });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
   app.post("/api/cursor-agent", async (req, res) => {
     try {
       const prompt = String(req.body?.prompt ?? "");
       const mode = String(req.body?.mode ?? "agent") as "agent" | "plan" | "ask";
       const cwd = String(req.body?.cwd ?? roots[0] ?? "");
-      
+      const model = typeof req.body?.model === "string" ? String(req.body.model).trim() || undefined : undefined;
+
       if (!prompt.trim()) {
         return res.status(400).json({ ok: false, error: "Missing prompt" });
       }
 
       // Validate cwd is in roots
       const realCwd = await validatePathInRoots(cwd, roots);
-      
-      const result = await executeCursorAgent(prompt, mode, realCwd);
+
+      const result = await executeCursorAgent(prompt, mode, realCwd, model);
       res.json({ ok: true, result });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
@@ -179,6 +191,7 @@ async function main() {
       const cwd = String(req.body?.cwd ?? roots[0] ?? "");
       const force = typeof req.body?.force === "boolean" ? Boolean(req.body.force) : true;
       const resume = typeof req.body?.resume === "string" ? String(req.body.resume) : "";
+      const model = typeof req.body?.model === "string" ? String(req.body.model).trim() || undefined : undefined;
 
       if (!prompt.trim()) {
         return res.status(400).json({ ok: false, error: "Missing prompt" });
@@ -220,6 +233,7 @@ async function main() {
         mode,
         cwd: realCwd,
         force,
+        model,
         resume: resume.trim() ? resume.trim() : undefined,
         timeoutMs: timeoutSec * 1000,
         onStdoutLine: (line) => broadcast(line),
@@ -321,6 +335,7 @@ async function main() {
       const cwd = String(req.body?.cwd ?? roots[0] ?? "");
       const force = typeof req.body?.force === "boolean" ? Boolean(req.body.force) : true;
       const resume = typeof req.body?.resume === "string" ? String(req.body.resume).trim() : "";
+      const model = typeof req.body?.model === "string" ? String(req.body.model).trim() || undefined : undefined;
 
       if (!prompt.trim()) {
         return res.status(400).json({ ok: false, error: "Missing prompt" });
@@ -346,6 +361,7 @@ async function main() {
         mode,
         cwd: realCwd,
         force,
+        model,
         resume: resume || undefined,
         timeoutMs: timeoutSec * 1000,
         onStdoutLine: (line) => writeLine(line),
@@ -687,10 +703,10 @@ async function main() {
 
   // ==================== End Editor state APIs ====================
 
-  // Serve built web if exists (after `pnpm --filter @web-ide/web build`)
-  const webDist = path.join(repoRoot, "apps", "web", "dist");
-  app.use(express.static(webDist));
-  app.get("/", (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+  // In production, you can optionally serve the built web app from apps/web/dist:
+  // const webDist = path.join(repoRoot, "apps", "web", "dist");
+  // app.use(express.static(webDist));
+  // app.get("/", (_req, res) => res.sendFile(path.join(webDist, "index.html")));
 
   const server = http.createServer(app);
 
@@ -704,10 +720,67 @@ async function main() {
     validateCwd: (cwd) => validatePathInRoots(cwd, roots),
   });
 
-  server.listen(port, "0.0.0.0", () => {});
+  server.listen(port, "0.0.0.0", () => {
+    const networkInterfaces = os.networkInterfaces();
+    const localIPs: string[] = [];
+    
+    for (const name of Object.keys(networkInterfaces)) {
+      const nets = networkInterfaces[name];
+      if (nets) {
+        for (const net of nets) {
+          // Skip internal (i.e. 127.0.0.1) and non-IPv4 addresses
+          if (net.family === "IPv4" && !net.internal) {
+            localIPs.push(net.address);
+          }
+        }
+      }
+    }
+    
+    console.log(`✅ Server running on 0.0.0.0:${port}`);
+    console.log(`   Local:   http://localhost:${port}/`);
+    if (localIPs.length > 0) {
+      console.log(`   Network: http://${localIPs[0]}:${port}/`);
+      if (localIPs.length > 1) {
+        localIPs.slice(1).forEach(ip => {
+          console.log(`            http://${ip}:${port}/`);
+        });
+      }
+    }
+    console.log(`   API:     http://localhost:${port}/api/*`);
+    console.log(`   WebSocket: ws://localhost:${port}/ws/term`);
+  });
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`\n${signal} received, shutting down gracefully...`);
+    server.close(() => {
+      console.log("HTTP server closed");
+      process.exit(0);
+    });
+    // Force close after 10 seconds
+    setTimeout(() => {
+      console.error("Forced shutdown after timeout");
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // Handle uncaught errors
+  process.on("uncaughtException", (err) => {
+    console.error("Uncaught Exception:", err);
+    // Don't exit immediately, let the server try to recover
+  });
+
+  process.on("unhandledRejection", (reason, promise) => {
+    console.error("Unhandled Rejection at:", promise, "reason:", reason);
+    // Don't exit immediately
+  });
 }
 
-main().catch(() => {
+main().catch((err) => {
+  console.error("Failed to start server:", err);
   process.exit(1);
 });
 

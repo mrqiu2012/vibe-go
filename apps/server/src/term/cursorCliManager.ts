@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TermServerMsg } from "@web-ide/protocol";
+import type { TermServerMsg } from "@vibego/protocol";
 
 type SendFn = (msg: TermServerMsg) => void;
 
@@ -53,7 +53,7 @@ async function loadPty(): Promise<Pty> {
   // Fallback: reuse my-remote's built pty module (works in this environment).
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  // apps/server/src/term -> .../web-ide-local/apps/server/src/term
+  // apps/server/src/term -> .../<repo>/apps/server/src/term
   // go up to .../remotecoding, then sibling my-remote/
   const remotecodingDir = path.resolve(__dirname, "..", "..", "..", "..", "..");
   const fallback = path.join(

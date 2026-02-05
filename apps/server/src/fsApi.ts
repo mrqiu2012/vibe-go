@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { FsEntry } from "@web-ide/protocol";
+import type { FsEntry } from "@vibego/protocol";
 import { validatePathInRoots } from "./pathGuard.js";
 
 export async function listDir(roots: string[], dirPath: string): Promise<{ path: string; entries: FsEntry[] }> {

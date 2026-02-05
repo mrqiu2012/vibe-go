@@ -784,9 +784,14 @@ input {
     font-size: 12px;
   }
 
+  .modelSelector,
   .modeSelector {
     padding: 3px 6px;
     font-size: 10px;
+  }
+
+  .modelSelector {
+    min-width: 100px;
   }
 
   .newChatBtn,
@@ -977,6 +982,18 @@ input {
   background: #ffffff;
   color: var(--text);
   cursor: pointer;
+}
+
+.modelSelector {
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  cursor: pointer;
+  min-width: 110px;
+  max-width: 160px;
 }
 
 .loadingIndicator {

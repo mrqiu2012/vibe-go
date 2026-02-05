@@ -47,9 +47,53 @@ function makeCleanEnv() {
   return baseEnv;
 }
 
-export async function executeCursorAgent(prompt: string, mode: "agent" | "plan" | "ask", cwd: string) {
+export type CursorModelOption = { id: string; label: string };
+
+export async function listCursorModels(): Promise<CursorModelOption[]> {
   const agentBin = await resolveAgentBin();
-  const args = ["-p", prompt, "--output-format", "json", "--model=auto"];
+  const baseEnv = makeCleanEnv();
+  const spawnPath = [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""]
+    .filter(Boolean)
+    .join(path.delimiter);
+  try {
+    const result = await execa(agentBin, ["--list-models"], {
+      env: {
+        ...baseEnv,
+        PATH: spawnPath,
+        HOME: process.env.HOME,
+        USER: process.env.USER,
+        SHELL: process.env.SHELL,
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+      },
+      timeout: 10000,
+    });
+    const lines = (result.stdout || "").split("\n").map((s) => s.trim()).filter(Boolean);
+    const list: CursorModelOption[] = [];
+    for (const line of lines) {
+      if (line === "Available models" || line.startsWith("Tip:")) continue;
+      const dash = line.indexOf(" - ");
+      if (dash > 0) {
+        const id = line.slice(0, dash).trim();
+        let label = line.slice(dash + 3).trim();
+        label = label.replace(/\s*\(current\)\s*$/i, "").replace(/\s*\(default\)\s*$/i, "");
+        if (id) list.push({ id, label: label || id });
+      }
+    }
+    return list.length ? list : [{ id: "auto", label: "Auto" }];
+  } catch {
+    return [{ id: "auto", label: "Auto" }];
+  }
+}
+
+export async function executeCursorAgent(
+  prompt: string,
+  mode: "agent" | "plan" | "ask",
+  cwd: string,
+  model?: string,
+) {
+  const agentBin = await resolveAgentBin();
+  const modelArg = (model && model.trim()) || "auto";
+  const args = ["-p", prompt, "--output-format", "json", `--model=${modelArg}`];
 
   if (mode === "plan") args.push("--mode=plan");
   if (mode === "ask") args.push("--mode=ask");
@@ -118,6 +162,7 @@ export type SpawnCursorAgentStreamOpts = {
   mode: "agent" | "plan" | "ask";
   cwd: string;
   force: boolean;
+  model?: string;
   resume?: string;
   timeoutMs?: number;
   onStdoutLine: (line: string) => void;
@@ -137,7 +182,8 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
   stop: () => void;
 }> {
   const agentBin = await resolveAgentBin();
-  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--stream-partial-output", "--model=auto"];
+  const modelArg = (opts.model && opts.model.trim()) || "auto";
+  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--stream-partial-output", `--model=${modelArg}`];
   if (opts.resume && opts.resume.trim()) args.push(`--resume=${opts.resume.trim()}`);
   if (opts.force) args.push("--force");
   if (opts.mode === "plan") args.push("--mode=plan");

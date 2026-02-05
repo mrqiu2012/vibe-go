@@ -33,7 +33,7 @@ let db: Database.Database | null = null;
 function getDbPath(): string {
   // Store database in user's home directory
   const homeDir = process.env.HOME || process.env.USERPROFILE || ".";
-  const dataDir = path.join(homeDir, ".web-ide");
+  const dataDir = path.join(homeDir, ".vibego");
   
   // Ensure directory exists
   if (!fs.existsSync(dataDir)) {

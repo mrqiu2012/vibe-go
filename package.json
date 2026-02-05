@@ -1,5 +1,5 @@
 {
-  "name": "web-ide-local",
+  "name": "vibego",
   "private": true,
   "packageManager": "pnpm@10.4.0",
   "workspaces": [
@@ -7,9 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n protocol,server,web -c auto \"pnpm --filter @web-ide/protocol dev\" \"pnpm --filter @web-ide/server dev\" \"pnpm --filter @web-ide/web dev\"",
+    "dev": "concurrently -n protocol,server,web -c auto --kill-others-on-fail=false \"pnpm --filter @vibego/protocol dev\" \"pnpm --filter @vibego/server dev\" \"pnpm --filter @vibego/web dev\"",
+    "control": "pnpm --filter @vibego/control dev",
     "build": "pnpm -r build",
-    "start": "pnpm --filter @web-ide/server start",
+    "start": "pnpm --filter @vibego/server start",
     "lint": "pnpm -r lint"
   },
   "devDependencies": {

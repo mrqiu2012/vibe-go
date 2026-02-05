@@ -12,12 +12,31 @@ importers:
         specifier: ^9.1.2
         version: 9.2.1
 
+  apps/control:
+    dependencies:
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.23
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.19.7
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   apps/server:
     dependencies:
       '@homebridge/node-pty-prebuilt-multiarch':
         specifier: ^0.13.1
         version: 0.13.1
-      '@web-ide/protocol':
+      '@vibego/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       better-sqlite3:

@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 
-// Use unpkg CDN instead of jsdelivr (which may be blocked/slow in some regions)
+// Use jsDelivr CDN (unpkg often times out; align version with monaco-editor in lockfile)
 loader.config({
   paths: {
-    vs: "https://unpkg.com/monaco-editor@0.52.0/min/vs",
+    vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs",
   },
 });
 import { Terminal } from "xterm";
@@ -426,7 +426,7 @@ export function App() {
       .then((r) => {
         setRoots(r.roots);
         // Try to restore last active root from localStorage
-        const saved = localStorage.getItem("web-ide:activeRoot");
+        const saved = localStorage.getItem("vibego:activeRoot");
         const defaultRoot = saved && r.roots.includes(saved) ? saved : r.roots[0] || "";
         setActiveRoot((prev) => prev || defaultRoot);
       })
@@ -436,7 +436,7 @@ export function App() {
   // Persist activeRoot to localStorage
   useEffect(() => {
     if (activeRoot) {
-      localStorage.setItem("web-ide:activeRoot", activeRoot);
+      localStorage.setItem("vibego:activeRoot", activeRoot);
     }
   }, [activeRoot]);
 
@@ -539,7 +539,7 @@ export function App() {
       initializedCwdRef.current = true;
       // If workspaces already loaded, don't override
       if (workspaces.length > 0) return;
-      const savedCwd = localStorage.getItem("web-ide:terminalCwd");
+      const savedCwd = localStorage.getItem("vibego:terminalCwd");
       // Only use saved cwd if it starts with the active root (valid path)
       if (savedCwd && savedCwd.startsWith(activeRoot)) {
         setTerminalCwd(savedCwd);
@@ -555,7 +555,7 @@ export function App() {
   // Persist terminalCwd to localStorage
   useEffect(() => {
     if (terminalCwd) {
-      localStorage.setItem("web-ide:terminalCwd", terminalCwd);
+      localStorage.setItem("vibego:terminalCwd", terminalCwd);
     }
   }, [terminalCwd]);
 

@@ -105,6 +105,34 @@ function buildStreamHandler(
 
 // ==================== Chat API ====================
 
+type ModelOption = { id: string; label: string };
+
+/** 固定模型列表，不请求 Cursor CLI */
+const CURSOR_MODELS: ModelOption[] = [
+  { id: "auto", label: "Auto（当前）" },
+  { id: "composer-1", label: "Composer 1" },
+  { id: "gpt-5.2", label: "GPT-5.2" },
+  { id: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
+  { id: "gpt-5.2-codex-high", label: "GPT-5.2 Codex High" },
+  { id: "gpt-5.2-codex-low", label: "GPT-5.2 Codex Low" },
+  { id: "gpt-5.2-codex-xhigh", label: "GPT-5.2 Codex Extra High" },
+  { id: "gpt-5.2-codex-fast", label: "GPT-5.2 Codex Fast" },
+  { id: "gpt-5.2-codex-high-fast", label: "GPT-5.2 Codex High Fast" },
+  { id: "gpt-5.2-codex-low-fast", label: "GPT-5.2 Codex Low Fast" },
+  { id: "gpt-5.2-codex-xhigh-fast", label: "GPT-5.2 Codex Extra High Fast" },
+  { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
+  { id: "gpt-5.1-codex-max-high", label: "GPT-5.1 Codex Max High" },
+  { id: "opus-4.5-thinking", label: "Claude 4.5 Opus (Thinking)（默认）" },
+  { id: "gpt-5.2-high", label: "GPT-5.2 High" },
+  { id: "gemini-3-pro", label: "Gemini 3 Pro" },
+  { id: "opus-4.5", label: "Claude 4.5 Opus" },
+  { id: "sonnet-4.5", label: "Claude 4.5 Sonnet" },
+  { id: "sonnet-4.5-thinking", label: "Claude 4.5 Sonnet (Thinking)" },
+  { id: "gpt-5.1-high", label: "GPT-5.1 High" },
+  { id: "gemini-3-flash", label: "Gemini 3 Flash" },
+  { id: "grok", label: "Grok" },
+];
+
 async function fetchSessions(cwd: string): Promise<ChatSession[]> {
   try {
     const res = await fetch(`/api/chat/sessions?cwd=${encodeURIComponent(cwd)}`);
@@ -229,6 +257,7 @@ export function CursorChatPanel({
   const [loading, setLoading] = useState(false);
   const [chatId, setChatId] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("auto");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const runIdRef = useRef<string | null>(null);
   const assistantIdRef = useRef<string | null>(null);
@@ -442,7 +471,14 @@ export function CursorChatPanel({
       const resp = await fetch("/api/cursor-agent/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: userMsg.content, mode, cwd, force: true, resume }),
+        body: JSON.stringify({
+          prompt: userMsg.content,
+          mode,
+          cwd,
+          force: true,
+          resume,
+          model: selectedModel || "auto",
+        }),
       });
 
       if (!resp.ok) {
@@ -621,11 +657,22 @@ export function CursorChatPanel({
   return (
     <div className="cursorChatPanel">
       <div className="chatHeader">
-        <span className="chatTitle">Cursor AI</span>
         <select className="modeSelector" value={mode} onChange={(e) => onModeChange(e.target.value as any)}>
           <option value="agent">Agent</option>
           <option value="plan">Plan</option>
           <option value="ask">Ask</option>
+        </select>
+        <select
+          className="modelSelector"
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          title="切换模型"
+        >
+          {CURSOR_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
         </select>
         <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
           新建

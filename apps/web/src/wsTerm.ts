@@ -23,12 +23,12 @@ export class TermClient {
 
   connect(): Promise<void> {
     const loc = window.location;
-    const isSameServer = loc.port === "3005";
+    const isSameServer = loc.port === "3990";
     const wsProto = loc.protocol === "https:" ? "wss" : "ws";
     // In dev/preview, connect directly to backend WS (Vite preview doesn't proxy WS).
     const url = isSameServer
       ? `${loc.origin.replace(/^http/, "ws")}/ws/term`
-      : `${wsProto}://${loc.hostname}:3005/ws/term`;
+      : `${wsProto}://${loc.hostname}:3990/ws/term`;
     this.log("connect()", { url });
     this.ws = new WebSocket(url);
     const ws = this.ws;

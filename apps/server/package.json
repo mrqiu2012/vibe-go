@@ -1,18 +1,18 @@
 {
-  "name": "@web-ide/server",
+  "name": "@vibego/server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore='**/node_modules/**' --ignore='**/dist/**' --ignore='**/.git/**' --ignore='**/data/**' src/index.ts",
     "build": "tsup src/index.ts --format esm --sourcemap --clean",
     "start": "node dist/index.js",
     "lint": "echo \"(no lint)\""
   },
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
-    "@web-ide/protocol": "workspace:*",
+    "@vibego/protocol": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
     "execa": "^9.6.0",

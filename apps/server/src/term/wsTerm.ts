@@ -1,7 +1,7 @@
 import type http from "node:http";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
-import type { TermClientMsg, TermServerMsg } from "@web-ide/protocol";
+import type { TermClientMsg, TermServerMsg } from "@vibego/protocol";
 import type { CommandWhitelist, Limits } from "./session.js";
 import { TermManager } from "./session.js";
 import { NativeShellManager } from "./nativeShellManager.js";

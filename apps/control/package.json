@@ -1,0 +1,20 @@
+{
+  "name": "@vibego/control",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "echo \"(no lint)\""
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.23",
+    "@types/node": "^22.10.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

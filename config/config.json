@@ -1,6 +1,6 @@
 {
   "server": {
-    "port": 3005
+    "port": 3990
   },
   "roots": [
     "/Users/chaonanqiu/Desktop/code",

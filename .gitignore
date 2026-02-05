@@ -37,6 +37,8 @@ coverage/
 *.tmp
 *.temp
 .cache/
+.vite/
+.vite-server/
 
 # Agent runtime buffers
 data/agent-buffers/

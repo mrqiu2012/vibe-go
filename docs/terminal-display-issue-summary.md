@@ -46,7 +46,7 @@
 
 ## 环境
 
-- 本地 Web IDE 项目，Monorepo（apps/web + apps/server）。
+- VibeGo 项目，Monorepo（apps/web + apps/server）。
 - 浏览器：常规现代浏览器；移动端也有同类现象。
 
 ---
