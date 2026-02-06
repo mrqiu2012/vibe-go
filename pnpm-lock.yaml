@@ -54,6 +54,9 @@ importers:
       ws:
         specifier: ^8.18.3
         version: 8.19.0
+      xterm-headless:
+        specifier: ^5.3.0
+        version: 5.3.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -88,6 +91,9 @@ importers:
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
+      monaco-editor:
+        specifier: ^0.55.1
+        version: 0.55.1
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -1988,6 +1994,10 @@ packages:
     deprecated: This package is now deprecated. Move to @xterm/addon-fit instead.
     peerDependencies:
       xterm: ^5.0.0
+
+  xterm-headless@5.3.0:
+    resolution: {integrity: sha512-HjKkEgvjlyXfZvI0LdQChOqGL5nDiXge6X2IvoQbOn+oavAKUCX9hKHtDxmWVwxgNCCvXDnfQCYL+3wyHQ9PXA==}
+    deprecated: This package is now deprecated. Move to @xterm/headless instead.
 
   xterm@5.3.0:
     resolution: {integrity: sha512-8QqjlekLUFTrU6x7xck1MsPzPA571K5zNqWm0M0oroYEWVOptZ0+ubQSkQ3uxIEhcIHRujJy6emDWX4A7qyFzg==}
@@ -4016,6 +4026,8 @@ snapshots:
   xterm-addon-fit@0.8.0(xterm@5.3.0):
     dependencies:
       xterm: 5.3.0
+
+  xterm-headless@5.3.0: {}
 
   xterm@5.3.0: {}
 

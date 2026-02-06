@@ -47,5 +47,5 @@ data/agent-buffers/
 Thumbs.db
 ehthumbs.db
 
-# Optional: Config with sensitive data (uncomment if needed)
-# config/config.json
+# Local config (contains machine-specific paths); use config.example.json as template
+config/config.json

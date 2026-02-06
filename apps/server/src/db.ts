@@ -90,6 +90,12 @@ function initSchema(db: Database.Database) {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON chat_sessions(cwd);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
   `);
@@ -358,6 +364,33 @@ export function setLastOpenedFile(root: string, filePath: string): void {
     INSERT INTO editor_state (root, file_path, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(root) DO UPDATE SET file_path = excluded.file_path, updated_at = excluded.updated_at
   `).run(root, filePath, now);
+}
+
+// ==================== App state (key/value) ====================
+
+export function getAppState(key: string): string | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT value FROM app_state WHERE key = ?
+  `).get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setAppState(key: string, value: string): void {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, value, now);
+}
+
+export function getActiveRoot(): string | null {
+  return getAppState("activeRoot");
+}
+
+export function setActiveRoot(root: string): void {
+  setAppState("activeRoot", root);
 }
 
 // Cleanup on process exit

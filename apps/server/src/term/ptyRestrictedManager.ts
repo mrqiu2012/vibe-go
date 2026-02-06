@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendRecording, initSessionRecording } from "./recording.js";
+import { snapshotManager } from "./snapshotManager.js";
 
 export type TermSend = (msg: any) => void;
 
@@ -20,6 +22,7 @@ type RestrictedPtySession = {
   cols: number;
   rows: number;
   pty: ReturnType<Pty["spawn"]>;
+  stdoutPath: string;
 };
 
 function randomId() {
@@ -104,12 +107,20 @@ export class PtyRestrictedManager {
       },
     });
 
-    const s: RestrictedPtySession = { id: sessionId, cwd: realCwd, cols, rows, pty: term };
+    const stdoutPath = initSessionRecording(sessionId);
+    await snapshotManager.create(sessionId, cols, rows);
+
+    const s: RestrictedPtySession = { id: sessionId, cwd: realCwd, cols, rows, pty: term, stdoutPath };
     this.sessions.set(sessionId, s);
 
-    term.onData((chunk: string) => this.opts.send({ t: "term.data", sessionId, data: chunk }));
+    term.onData((chunk: string) => {
+      appendRecording(stdoutPath, chunk);
+      snapshotManager.write(sessionId, chunk);
+      this.opts.send({ t: "term.data", sessionId, data: chunk });
+    });
     term.onExit((e: any) => {
       this.sessions.delete(sessionId);
+      snapshotManager.dispose(sessionId);
       this.opts.send({ t: "term.exit", sessionId, code: e?.exitCode ?? 0, signal: e?.signal });
     });
 
@@ -120,6 +131,7 @@ export class PtyRestrictedManager {
     const s = this.sessions.get(sessionId);
     if (!s) return;
     this.sessions.delete(sessionId);
+    snapshotManager.dispose(sessionId);
     try {
       s.pty.kill();
     } catch {}
@@ -131,6 +143,7 @@ export class PtyRestrictedManager {
     try {
       s.pty.resize(cols, rows);
     } catch {}
+    snapshotManager.resize(sessionId, cols, rows);
   }
 
   stdin(sessionId: string, data: string) {

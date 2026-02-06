@@ -18,6 +18,20 @@ export async function apiRoots() {
   return j<{ ok: true; roots: string[] }>(await fetch("/api/roots"));
 }
 
+export async function apiGetActiveRoot() {
+  return j<{ ok: true; root: string | null }>(await fetch("/api/app/active-root"));
+}
+
+export async function apiSetActiveRoot(root: string) {
+  return j<{ ok: true }>(
+    await fetch("/api/app/active-root", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root }),
+    })
+  );
+}
+
 export async function apiList(path: string) {
   return j<{ ok: true; path: string; entries: FsEntry[] }>(await fetch(`/api/list?path=${encodeURIComponent(path)}`));
 }
@@ -34,6 +48,16 @@ export async function apiWrite(path: string, text: string) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path, text }),
+    }),
+  );
+}
+
+export async function apiMkdir(path: string) {
+  return j<{ ok: true; path: string; mtimeMs: number }>(
+    await fetch(`/api/mkdir`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
     }),
   );
 }
@@ -95,4 +119,3 @@ export async function apiSetLastOpenedFile(root: string, filePath: string) {
     })
   );
 }
-

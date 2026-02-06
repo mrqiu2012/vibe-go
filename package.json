@@ -11,7 +11,11 @@
     "control": "pnpm --filter @vibego/control dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter @vibego/server start",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "pm2:start": "pnpm build && pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs vibego-server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

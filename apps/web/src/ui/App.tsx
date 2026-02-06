@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 
-// Use jsDelivr CDN (unpkg often times out; align version with monaco-editor in lockfile)
+// Load monaco from node_modules (served at /vs by Vite)
 loader.config({
   paths: {
-    vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs",
+    vs: "/vs",
   },
 });
 import { Terminal } from "xterm";
@@ -15,12 +15,15 @@ import {
   apiRead, 
   apiRoots, 
   apiWrite, 
+  apiMkdir,
   apiGetWorkspaces,
   apiCreateWorkspace,
   apiSetActiveWorkspace,
   apiDeleteWorkspace,
   apiGetLastOpenedFile,
   apiSetLastOpenedFile,
+  apiGetActiveRoot,
+  apiSetActiveRoot,
   type FsEntry,
   type Workspace,
 } from "../api";
@@ -205,10 +208,25 @@ function TreeView(props: {
   const copyMenuRef = useRef<HTMLDivElement>(null);
 
   const copyToClipboard = useCallback((text: string) => {
-    navigator.clipboard.writeText(text).then(
-      () => setCopyOpen(false),
-      () => setCopyOpen(false),
-    );
+    const done = () => setCopyOpen(false);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+      return;
+    }
+    // Fallback for non-secure context or when clipboard API is unavailable
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } finally {
+      done();
+    }
   }, []);
 
   useEffect(() => {
@@ -224,6 +242,7 @@ function TreeView(props: {
     <div>
       <div
         className={"fileRow" + (isActive ? " fileRowActive" : "")}
+        data-path={node.path}
         style={{ paddingLeft: 8 + indent }}
         onClick={() => {
           if (node.type === "dir") props.onToggleDir(node);
@@ -308,8 +327,24 @@ export function App() {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const treeRef = useRef<TreeNode | null>(null);
   const expandingTreeRef = useRef(false);
+  const lastSyncedExplorerRootRef = useRef<string>("");
+  const lastSyncedExplorerPathRef = useRef<string>("");
+  const manualRootOverrideRef = useRef(false);
+  const autoExpandSeqRef = useRef(0);
+  const autoExpandRequestRef = useRef<{ id: number; root: string; path: string } | null>(null);
+  const userCollapsedByRootRef = useRef<Map<string, Set<string>>>(new Map());
+  const fileListRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
+
+  // Auto-hide status toast after 3 seconds
+  useEffect(() => {
+    if (!status) return;
+    const timer = setTimeout(() => {
+      setStatus("");
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   // Workspace management
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -356,8 +391,18 @@ export function App() {
   const [pasteModalOpen, setPasteModalOpen] = useState(false);
   const [pasteModalText, setPasteModalText] = useState("");
   const pasteModalTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createModalType, setCreateModalType] = useState<"file" | "folder">("file");
+  const [createModalName, setCreateModalName] = useState("");
+  const [createModalParent, setCreateModalParent] = useState("");
+  const createModalInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileKeysVisible, setMobileKeysVisible] = useState(false);
   const collapsedPanelWidth = 48;
+  const activeWorkspace = useMemo(
+    () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
+    [workspaces, activeWorkspaceId],
+  );
+  const projectCwd = activeWorkspace?.cwd || terminalCwd;
   const splitGapPercent = 2;
 
   const terminalVisible = !isMobile || mobileTab === "terminal";
@@ -598,11 +643,20 @@ export function App() {
 
   useEffect(() => {
     apiRoots()
-      .then((r) => {
+      .then(async (r) => {
         setRoots(r.roots);
-        // Try to restore last active root from localStorage
+        let dbRoot: string | null = null;
+        try {
+          const res = await apiGetActiveRoot();
+          dbRoot = res.root;
+        } catch {}
+        // Try to restore last active root from SQLite, then localStorage
         const saved = localStorage.getItem("vibego:activeRoot");
-        const defaultRoot = saved && r.roots.includes(saved) ? saved : r.roots[0] || "";
+        const defaultRoot =
+          ((dbRoot && r.roots.includes(dbRoot) ? dbRoot : null) ??
+            (saved && r.roots.includes(saved) ? saved : null) ??
+            r.roots[0]) ||
+          "";
         setActiveRoot((prev) => prev || defaultRoot);
       })
       .catch((e) => setStatus(`[错误] 根目录: ${e?.message ?? String(e)}`));
@@ -612,6 +666,13 @@ export function App() {
   useEffect(() => {
     if (activeRoot) {
       localStorage.setItem("vibego:activeRoot", activeRoot);
+      apiSetActiveRoot(activeRoot).catch(() => {});
+    }
+  }, [activeRoot]);
+
+  useEffect(() => {
+    if (activeRoot) {
+      localStorage.setItem("vibego:lastExplorerRoot", activeRoot);
     }
   }, [activeRoot]);
 
@@ -622,21 +683,49 @@ export function App() {
       .then((res) => {
         if (cancelled) return;
         setWorkspaces(res.workspaces);
-        if (res.activeId) {
-          setActiveWorkspaceId(res.activeId);
-          const ws = res.workspaces.find((w) => w.id === res.activeId);
-          if (ws) setTerminalCwd(ws.cwd);
-        } else if (res.workspaces.length > 0) {
-          // No active workspace set, use first one
-          setActiveWorkspaceId(res.workspaces[0].id);
-          setTerminalCwd(res.workspaces[0].cwd);
+        if (res.workspaces.length > 0) {
+          // Always prefer workspace marked isActive=true, then activeId, then first one
+          const activeWs =
+            res.workspaces.find((w) => w.isActive) ??
+            (res.activeId ? res.workspaces.find((w) => w.id === res.activeId) : null) ??
+            res.workspaces[0];
+          setActiveWorkspaceId(activeWs.id);
+          manualRootOverrideRef.current = false;
+          syncExplorerRootForCwd(activeWs.cwd, { force: true });
+          setTerminalCwd(activeWs.cwd);
           // Set it as active in DB
-          apiSetActiveWorkspace(res.workspaces[0].id).catch(() => {});
+          apiSetActiveWorkspace(activeWs.id).catch(() => {});
         }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  const resolveRootForCwd = useCallback(
+    (cwd: string) => {
+      if (roots.length === 0) return "";
+      let best = "";
+      for (const r of roots) {
+        if (cwd === r || cwd.startsWith(r + "/")) {
+          if (r.length > best.length) best = r;
+        }
+      }
+      return best || activeRoot;
+    },
+    [roots, activeRoot],
+  );
+
+  const syncExplorerRootForCwd = useCallback(
+    (cwd: string, opts?: { force?: boolean }) => {
+      if (manualRootOverrideRef.current && !opts?.force) return;
+      const root = resolveRootForCwd(cwd);
+      if (!root) return;
+      if (root && root !== activeRoot) {
+        setActiveRoot(root);
+      }
+    },
+    [resolveRootForCwd, activeRoot],
+  );
 
   // Workspace management functions
   const addWorkspace = useCallback(async (cwd: string) => {
@@ -644,6 +733,8 @@ export function App() {
     const existing = workspaces.find((w) => w.cwd === cwd);
     if (existing) {
       setActiveWorkspaceId(existing.id);
+      manualRootOverrideRef.current = false;
+      syncExplorerRootForCwd(existing.cwd, { force: true });
       setTerminalCwd(existing.cwd);
       // Update active in DB
       apiSetActiveWorkspace(existing.id).catch(() => {});
@@ -661,14 +752,18 @@ export function App() {
       const res = await apiCreateWorkspace(newWorkspace);
       setWorkspaces((prev) => [...prev, res.workspace]);
       setActiveWorkspaceId(res.workspace.id);
+      manualRootOverrideRef.current = false;
+      syncExplorerRootForCwd(cwd, { force: true });
       setTerminalCwd(cwd);
     } catch {
       // Fallback: add locally anyway
       setWorkspaces((prev) => [...prev, { ...newWorkspace, createdAt: Date.now() }]);
       setActiveWorkspaceId(newWorkspace.id);
+      manualRootOverrideRef.current = false;
+      syncExplorerRootForCwd(cwd, { force: true });
       setTerminalCwd(cwd);
     }
-  }, [workspaces]);
+  }, [workspaces, syncExplorerRootForCwd]);
 
   const removeWorkspace = useCallback(async (id: string) => {
     // Optimistically update UI
@@ -677,6 +772,8 @@ export function App() {
       // If removing active workspace, switch to another
       if (id === activeWorkspaceId && next.length > 0) {
         setActiveWorkspaceId(next[0].id);
+        manualRootOverrideRef.current = false;
+        syncExplorerRootForCwd(next[0].cwd, { force: true });
         setTerminalCwd(next[0].cwd);
         // Update active in DB
         apiSetActiveWorkspace(next[0].id).catch(() => {});
@@ -691,19 +788,21 @@ export function App() {
     try {
       await apiDeleteWorkspace(id);
     } catch {}
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, syncExplorerRootForCwd]);
 
   const switchWorkspace = useCallback(async (id: string) => {
     const ws = workspaces.find((w) => w.id === id);
     if (ws) {
       setActiveWorkspaceId(id);
+      manualRootOverrideRef.current = false;
+      syncExplorerRootForCwd(ws.cwd, { force: true });
       setTerminalCwd(ws.cwd);
       // Update active in DB
       try {
         await apiSetActiveWorkspace(id);
       } catch {}
     }
-  }, [workspaces]);
+  }, [workspaces, syncExplorerRootForCwd]);
 
   const initializedCwdRef = useRef(false);
 
@@ -735,8 +834,50 @@ export function App() {
   }, [terminalCwd]);
 
   useEffect(() => {
+    if (roots.length === 0 || !terminalCwd) return;
+    syncExplorerRootForCwd(terminalCwd);
+  }, [roots.length, terminalCwd, syncExplorerRootForCwd]);
+
+  useEffect(() => {
+    if (roots.length === 0 || !projectCwd) return;
+    syncExplorerRootForCwd(projectCwd);
+  }, [roots.length, projectCwd, syncExplorerRootForCwd]);
+
+  useEffect(() => {
+    if (!activeRoot || !projectCwd) return;
+    if (!projectCwd.startsWith(activeRoot)) return;
+    localStorage.setItem(`vibego:lastExplorerPath:${activeRoot}`, projectCwd);
+  }, [activeRoot, projectCwd]);
+
+  useEffect(() => {
     treeRef.current = tree;
   }, [tree]);
+
+  const explorerTargetPath = useMemo(() => {
+    if (!activeRoot) return "";
+    if (projectCwd && projectCwd.startsWith(activeRoot)) return projectCwd;
+    const saved = localStorage.getItem(`vibego:lastExplorerPath:${activeRoot}`) || "";
+    if (saved && saved.startsWith(activeRoot)) return saved;
+    return activeRoot;
+  }, [activeRoot, projectCwd]);
+
+  useEffect(() => {
+    lastSyncedExplorerRootRef.current = "";
+    lastSyncedExplorerPathRef.current = "";
+  }, [projectCwd, activeRoot]);
+
+  const scrollToTerminalCwd = useCallback((): boolean => {
+    if (!explorerTargetPath) return false;
+    if (!fileListRef.current) return false;
+    if (!isMobile && panelExplorerCollapsed) return false;
+    if (isMobile && mobileTab !== "explorer") return false;
+    const escape = (globalThis as any).CSS?.escape ?? ((v: string) => v.replace(/["\\]/g, "\\$&"));
+    const selector = `[data-path="${escape(explorerTargetPath)}"]`;
+    const target = fileListRef.current.querySelector(selector) as HTMLElement | null;
+    if (!target) return false;
+    target.scrollIntoView({ block: "start" });
+    return true;
+  }, [explorerTargetPath, isMobile, mobileTab, panelExplorerCollapsed]);
 
   useEffect(() => {
     if (!activeRoot) return;
@@ -761,23 +902,42 @@ export function App() {
   }, [activeRoot]);
 
   useEffect(() => {
-    if (!activeRoot || !terminalCwd) return;
-    if (!terminalCwd.startsWith(activeRoot)) return;
+    if (!activeRoot || !explorerTargetPath) return;
+    if (!explorerTargetPath.startsWith(activeRoot)) return;
     if (!treeRef.current) return;
     if (expandingTreeRef.current) return;
+
+    // Only skip re-expand when we already synced this path and tree changed due to user collapse.
+    // Set lastSynced only after expandToPath completes so initial load and tree-with-children updates still run.
+    if (
+      lastSyncedExplorerRootRef.current === activeRoot &&
+      lastSyncedExplorerPathRef.current === explorerTargetPath
+    ) {
+      return;
+    }
+
+    const rootToSync = activeRoot;
+    const pathToSync = explorerTargetPath;
+    const waitForNode = async (path: string, attempts = 20): Promise<TreeNode | null> => {
+      for (let i = 0; i < attempts; i += 1) {
+        const currentTree = treeRef.current;
+        const node = currentTree ? findNode(currentTree, path) : null;
+        if (node) return node;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return null;
+    };
 
     const expandToPath = async () => {
       expandingTreeRef.current = true;
       try {
-        const rel = terminalCwd.slice(activeRoot.length).replace(/^\/+/, "");
+        const rel = pathToSync.slice(rootToSync.length).replace(/^\/+/, "");
         const parts = rel ? rel.split("/") : [];
-        let currentPath = activeRoot;
+        let currentPath = rootToSync;
 
         for (const part of parts) {
           currentPath = joinPath(currentPath, part);
-          const currentTree = treeRef.current;
-          if (!currentTree) return;
-          const node = findNode(currentTree, currentPath);
+          const node = await waitForNode(currentPath);
           if (!node || node.type !== "dir") return;
 
           if (!node.expanded) {
@@ -811,6 +971,7 @@ export function App() {
                     }))
                   : prev,
               );
+              await new Promise((r) => setTimeout(r, 0));
             } catch (e: any) {
               setStatus(`[error] list: ${e?.message ?? String(e)}`);
               setTree((prev) =>
@@ -822,16 +983,33 @@ export function App() {
         }
       } finally {
         expandingTreeRef.current = false;
+        lastSyncedExplorerRootRef.current = rootToSync;
+        lastSyncedExplorerPathRef.current = pathToSync;
+        setTimeout(() => {
+          scrollToTerminalCwd();
+        }, 50);
       }
     };
 
     void expandToPath();
-  }, [activeRoot, terminalCwd]);
+  }, [activeRoot, explorerTargetPath, scrollToTerminalCwd, tree]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const ok = scrollToTerminalCwd();
+      if (!ok) {
+        setTimeout(() => {
+          scrollToTerminalCwd();
+        }, 80);
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [scrollToTerminalCwd, tree]);
 
   // Restore last opened file from SQLite when activeRoot changes
   useEffect(() => {
     if (!activeRoot) return;
-    if (restoredRootRef.current === activeRoot && (openTabs.length > 0 || activeFile)) return;
+    if (restoredRootRef.current === activeRoot) return;
     let cancelled = false;
     const restoreFromPath = async (path: string) => {
       if (!path.startsWith(activeRoot)) return;
@@ -953,6 +1131,103 @@ export function App() {
       return nextTabs;
     });
   };
+
+  const refreshDirectoryInTree = useCallback(
+    async (dirPath: string) => {
+      try {
+        const r = await apiList(dirPath);
+        const children: TreeNode[] = r.entries.map((e: FsEntry) => ({
+          path: joinPath(r.path, e.name),
+          name: e.name,
+          type: e.type,
+        }));
+        if (dirPath === activeRoot) {
+          setTree((prev) =>
+            prev ? { ...prev, children, loaded: true, loading: false } : prev,
+          );
+        } else {
+          setTree((prev) =>
+            prev
+              ? updateNode(prev, dirPath, (n) => ({
+                  ...n,
+                  children,
+                  loaded: true,
+                  loading: false,
+                }))
+              : prev,
+          );
+        }
+      } catch (e: any) {
+        setStatus(`[错误] 刷新: ${e?.message ?? String(e)}`);
+      }
+    },
+    [activeRoot],
+  );
+
+  const createFolder = useCallback(() => {
+    const parentDir = explorerTargetPath || activeRoot;
+    if (!parentDir) return;
+    setCreateModalType("folder");
+    setCreateModalParent(parentDir);
+    setCreateModalName("");
+    setCreateModalOpen(true);
+    setTimeout(() => createModalInputRef.current?.focus(), 80);
+  }, [explorerTargetPath, activeRoot]);
+
+  const createFile = useCallback(() => {
+    const parentDir = explorerTargetPath || activeRoot;
+    if (!parentDir) return;
+    setCreateModalType("file");
+    setCreateModalParent(parentDir);
+    setCreateModalName("");
+    setCreateModalOpen(true);
+    setTimeout(() => createModalInputRef.current?.focus(), 80);
+  }, [explorerTargetPath, activeRoot]);
+
+  const handleCreateConfirm = useCallback(async () => {
+    const parentDir = createModalParent;
+    const rawName = createModalName.trim();
+    if (!parentDir) {
+      setCreateModalOpen(false);
+      return;
+    }
+    if (!rawName) {
+      setStatus("[错误] 名称不能为空");
+      return;
+    }
+    const newPath = joinPath(parentDir, rawName);
+    try {
+      if (createModalType === "folder") {
+        await apiMkdir(newPath);
+        setStatus(`[成功] 已创建文件夹 ${rawName}`);
+        await refreshDirectoryInTree(parentDir);
+      } else {
+        const r = await apiWrite(newPath, "");
+        setStatus(`[成功] 已创建文件 ${rawName}`);
+        await refreshDirectoryInTree(parentDir);
+        setActiveFile(newPath);
+        setEditorMode("edit");
+        if (!isMobile) setPanelEditorCollapsed(false);
+        setOpenTabs((prev) => (prev.includes(newPath) ? prev : [...prev, newPath]));
+        setFileStateByPath((prev) => ({
+          ...prev,
+          [newPath]: { text: "", dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
+        }));
+      }
+      setCreateModalOpen(false);
+      setCreateModalName("");
+    } catch (e: any) {
+      setStatus(
+        `[错误] 创建${createModalType === "folder" ? "文件夹" : "文件"}: ${e?.message ?? String(e)}`,
+      );
+    }
+  }, [
+    createModalParent,
+    createModalName,
+    createModalType,
+    isMobile,
+    refreshDirectoryInTree,
+  ]);
 
   // Ctrl+S / Cmd+S
   useEffect(() => {
@@ -1340,6 +1615,34 @@ export function App() {
         logTerm("resize after open", { sessionId: resp.sessionId, cols: term.cols, rows: term.rows });
         void client.resize(resp.sessionId, term.cols, term.rows).catch(() => {});
 
+        if (isPtySession) {
+          try {
+            const snap = await fetch(`/api/term/snapshot/${resp.sessionId}?tailBytes=20000`);
+            if (snap.ok) {
+              const payload = await snap.json();
+              if (payload?.data && term.buffer.active.length === 0) {
+                term.write(payload.data);
+              } else if (!payload?.data) {
+                const replay = await fetch(`/api/term/replay/${resp.sessionId}?tailBytes=20000`);
+                if (replay.ok) {
+                  const text = await replay.text();
+                  if (text && term.buffer.active.length === 0) {
+                    term.write(text);
+                  }
+                }
+              }
+            } else {
+              const replay = await fetch(`/api/term/replay/${resp.sessionId}?tailBytes=20000`);
+              if (replay.ok) {
+                const text = await replay.text();
+                if (text && term.buffer.active.length === 0) {
+                  term.write(text);
+                }
+              }
+            }
+          } catch {}
+        }
+
         // Flush any keystrokes typed while the session was opening.
         const pending = termPendingStdinRef.current;
         if (pending) {
@@ -1357,11 +1660,35 @@ export function App() {
 
   const ExplorerPanel = (
     <div className={"panel" + (isMobile && mobileTab !== "explorer" ? " hidden" : "")} style={{ flex: isMobile ? 1 : undefined }}>
-      <div className="panelHeader">
-        <h2>文件</h2>
+      <div className="panelHeader" style={{ flexDirection: "column", alignItems: "stretch" }}>
+        <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+          <h2>文件</h2>
+        </div>
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <button
+            type="button"
+            className="segBtn"
+            onClick={createFolder}
+            disabled={!activeRoot}
+            title="新建文件夹"
+          >
+            📁+
+          </button>
+          <button
+            type="button"
+            className="segBtn"
+            onClick={createFile}
+            disabled={!activeRoot}
+            title="新建文件"
+          >
+            📄+
+          </button>
+        </div>
       </div>
       <div className="panelBody">
-        <div className="fileList">
+        <div className="fileList" ref={(el) => {
+          if (el) fileListRef.current = el;
+        }}>
           {tree ? (
             <TreeView
               node={tree}
@@ -1401,48 +1728,75 @@ export function App() {
             minWidth: isMobile ? "auto" : panelExplorerCollapsed ? 48 : "200px",
           }}
         >
-          <div className="panelHeader">
-            <h2>Files</h2>
-            {!isMobile && panelExplorerCollapsed && (
-              <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
-            )}
-            {!panelExplorerCollapsed && (
-              <div className="row" style={{ marginLeft: "auto" }}>
-                <select
-                  className="select"
-                  value={activeRoot}
-                  onChange={(e) => {
-                    setActiveRoot(e.target.value);
-                    setTerminalCwd(e.target.value);
-                    setOpenTabs([]);
-                    setActiveFile("");
-                    setFileStateByPath({});
-                    setEditorMode("edit");
-                  }}
-                  disabled={roots.length === 0}
-                  title="根目录"
+          <div className="panelHeader" style={{ flexDirection: "column", alignItems: "stretch" }}>
+            <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+              <h2>Files</h2>
+              {!isMobile && panelExplorerCollapsed && (
+                <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
+              )}
+              {!panelExplorerCollapsed && (
+                <div className="row" style={{ marginLeft: "auto" }}>
+                  <select
+                    className="select"
+                    value={activeRoot}
+                    onChange={(e) => {
+                      manualRootOverrideRef.current = true;
+                      setActiveRoot(e.target.value);
+                      setTerminalCwd(e.target.value);
+                      setOpenTabs([]);
+                      setActiveFile("");
+                      setFileStateByPath({});
+                      setEditorMode("edit");
+                    }}
+                    disabled={roots.length === 0}
+                    title="根目录"
+                  >
+                    {roots.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!isMobile && (
+                <button
+                  type="button"
+                  className="panelCollapseBtn"
+                  onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
+                  title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
                 >
-                  {roots.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
+                  {panelExplorerCollapsed ? "▶" : "◀"}
+                </button>
+              )}
+            </div>
+            {!panelExplorerCollapsed && (
+              <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="segBtn"
+                  onClick={createFolder}
+                  disabled={!activeRoot}
+                  title="新建文件夹"
+                >
+                  📁+
+                </button>
+                <button
+                  type="button"
+                  className="segBtn"
+                  onClick={createFile}
+                  disabled={!activeRoot}
+                  title="新建文件"
+                >
+                  📄+
+                </button>
               </div>
-            )}
-            {!isMobile && (
-              <button
-                type="button"
-                className="panelCollapseBtn"
-                onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
-                title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
-              >
-                {panelExplorerCollapsed ? "▶" : "◀"}
-              </button>
             )}
           </div>
           <div className="panelBody">
-            <div className="fileList">
+            <div className="fileList" ref={(el) => {
+              if (el) fileListRef.current = el;
+            }}>
               {tree ? (
                 <TreeView
                   node={tree}
@@ -1717,9 +2071,9 @@ export function App() {
                     <button
                       className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
                       onClick={() => setTermMode("cursor")}
-                      title="Cursor AI（非交互模式）"
+                      title="Cursor Chat（非交互模式）"
                     >
-                      Cursor
+                      Cursor Chat
                     </button>
                   <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
                     setTermMode("codex");
@@ -1898,6 +2252,7 @@ export function App() {
               className="select"
               value={activeRoot}
               onChange={(e) => {
+                manualRootOverrideRef.current = true;
                 setActiveRoot(e.target.value);
                 setTerminalCwd(e.target.value);
                 setOpenTabs([]);
@@ -2083,9 +2438,9 @@ export function App() {
                   <button
                     className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
                     onClick={() => setTermMode("cursor")}
-                    title="Cursor AI（非交互模式）"
+                    title="Cursor Chat（非交互模式）"
                   >
-                    Cursor
+                    Cursor Chat
                   </button>
                   <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => setTermMode("codex")}>
                     Codex
@@ -2273,6 +2628,73 @@ export function App() {
                   }
                   setPasteModalOpen(false);
                   setPasteModalText("");
+                }}
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {createModalOpen ? (
+        <div
+          className="pasteModalOverlay"
+          onClick={() => setCreateModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="createModalTitle"
+        >
+          <div
+            className="pasteModalBox"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="createModalTitle" className="pasteModalTitle">
+              新建{createModalType === "folder" ? "文件夹" : "文件"}
+            </h3>
+            <p className="fileMeta" style={{ marginBottom: 8 }}>
+              在当前目录下新建。
+              当前目录: {createModalParent || "(未选择目录)"}
+            </p>
+            <input
+              ref={createModalInputRef}
+              type="text"
+              style={{
+                width: "100%",
+                padding: "6px 10px",
+                fontSize: 14,
+                fontFamily: "var(--mono)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                boxSizing: "border-box",
+              }}
+              placeholder={
+                createModalType === "folder"
+                  ? "例如：src 或 docs"
+                  : "例如：index.ts 或 README.md"
+              }
+              value={createModalName}
+              onChange={(e) => setCreateModalName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleCreateConfirm();
+                }
+              }}
+            />
+            <div className="pasteModalActions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setCreateModalOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void handleCreateConfirm();
                 }}
               >
                 确定

@@ -42,6 +42,84 @@ pnpm build
 pnpm start
 ```
 
+## 守护进程（更稳定的常驻方式）
+
+若希望服务在后台常驻、崩溃自动重启、关掉终端也不退出，可用以下方式之一。
+
+### 方式一：PM2（推荐）
+
+[PM2](https://pm2.keymetrics.io/) 是常用的 Node 进程管理器，支持自动重启、日志、开机自启。
+
+1. **安装 PM2**（全局，一次即可）：
+   ```bash
+   pnpm add -g pm2
+   # 或: npm i -g pm2
+   ```
+
+2. **构建并用 PM2 启动**：
+   ```bash
+   pnpm build
+   pm2 start ecosystem.config.cjs
+   ```
+
+3. **常用命令**：
+   - `pm2 status` — 查看状态
+   - `pm2 logs vibego-server` — 看日志
+   - `pm2 restart vibego-server` — 重启
+   - `pm2 stop vibego-server` — 停止
+   - `pm2 delete vibego-server` — 从 PM2 中移除
+
+4. **开机自启**（可选）：
+   ```bash
+   pm2 save
+   pm2 startup
+   ```
+   按终端提示执行生成的命令即可。
+
+项目根目录的 `ecosystem.config.cjs` 已配置好：单实例、崩溃自动重启、日志输出到 `logs/`。
+
+### 方式二：macOS launchd
+
+不装 PM2 时，可用系统自带的 launchd 守护。
+
+1. 在项目根目录执行 `pnpm build`，确认 `apps/server/dist/index.js` 存在。
+2. 创建 plist（将 `YOUR_USER` 和 `/path/to/web-ide-local` 换成你的用户名和项目绝对路径）：
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+     <key>Label</key>
+     <string>local.vibego.server</string>
+     <key>ProgramArguments</key>
+     <array>
+       <string>/usr/bin/env</string>
+       <string>node</string>
+       <string>/path/to/web-ide-local/apps/server/dist/index.js</string>
+     </array>
+     <key>WorkingDirectory</key>
+     <string>/path/to/web-ide-local/apps/server</string>
+     <key>RunAtLoad</key>
+     <true/>
+     <key>KeepAlive</key>
+     <true/>
+     <key>StandardOutPath</key>
+     <string>/path/to/web-ide-local/logs/vibego-stdout.log</string>
+     <key>StandardErrorPath</key>
+     <string>/path/to/web-ide-local/logs/vibego-stderr.log</string>
+   </dict>
+   </plist>
+   ```
+3. 保存为 `~/Library/LaunchAgents/local.vibego.server.plist`。
+4. 加载并启动：
+   ```bash
+   mkdir -p /path/to/web-ide-local/logs
+   launchctl load ~/Library/LaunchAgents/local.vibego.server.plist
+   ```
+5. 停止/卸载：`launchctl unload ~/Library/LaunchAgents/local.vibego.server.plist`。
+
+`KeepAlive` 为 `true` 时，进程退出会被自动拉起。
+
 ## 排查问题
 
 ### 如果页面不断刷新

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execa } from "execa";
 import { fileURLToPath } from "node:url";
+import { appendRecording, initSessionRecording } from "./recording.js";
+import { snapshotManager } from "./snapshotManager.js";
 
 export type TermSend = (msg: any) => void;
 
@@ -21,6 +23,7 @@ type CodexPtySession = {
   cols: number;
   rows: number;
   pty: ReturnType<Pty["spawn"]>;
+  stdoutPath: string;
 };
 
 function randomId() {
@@ -130,7 +133,9 @@ export class PtyCodexManager {
       },
     });
 
-    const s: CodexPtySession = { id: sessionId, cwd: realCwd, cols, rows, pty: term };
+    const stdoutPath = initSessionRecording(sessionId);
+    await snapshotManager.create(sessionId, cols, rows);
+    const s: CodexPtySession = { id: sessionId, cwd: realCwd, cols, rows, pty: term, stdoutPath };
     this.sessions.set(sessionId, s);
 
     // Send initial hint so user sees something immediately (codex may be slow to first output over network).
@@ -140,9 +145,14 @@ export class PtyCodexManager {
       data: `[codex] PTY 已启动，等待 codex 输出…\r\n`,
     });
 
-    term.onData((chunk: string) => this.opts.send({ t: "term.data", sessionId, data: chunk }));
+    term.onData((chunk: string) => {
+      appendRecording(stdoutPath, chunk);
+      snapshotManager.write(sessionId, chunk);
+      this.opts.send({ t: "term.data", sessionId, data: chunk });
+    });
     term.onExit((e: any) => {
       this.sessions.delete(sessionId);
+      snapshotManager.dispose(sessionId);
       this.opts.send({ t: "term.exit", sessionId, code: e?.exitCode ?? 0, signal: e?.signal });
     });
 
@@ -153,6 +163,7 @@ export class PtyCodexManager {
     const s = this.sessions.get(sessionId);
     if (!s) return;
     this.sessions.delete(sessionId);
+    snapshotManager.dispose(sessionId);
     try {
       s.pty.kill();
     } catch {}
@@ -164,6 +175,7 @@ export class PtyCodexManager {
     try {
       s.pty.resize(cols, rows);
     } catch {}
+    snapshotManager.resize(sessionId, cols, rows);
   }
 
   stdin(sessionId: string, data: string) {

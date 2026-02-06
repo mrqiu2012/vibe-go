@@ -50,3 +50,12 @@ export async function writeTextFile(
   return { path: real, size: st.size, mtimeMs: st.mtimeMs };
 }
 
+export async function createDir(
+  roots: string[],
+  dirPath: string,
+): Promise<{ path: string; mtimeMs: number }> {
+  const real = await validatePathInRoots(dirPath, roots);
+  await fs.mkdir(real, { recursive: true });
+  const st = await fs.stat(real);
+  return { path: real, mtimeMs: st.mtimeMs };
+}

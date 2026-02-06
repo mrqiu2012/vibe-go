@@ -11,8 +11,9 @@ import { execa } from "execa";
 
 import { loadConfig } from "./config.js";
 import { normalizeRoots, validatePathInRoots } from "./pathGuard.js";
-import { listDir, readTextFile, writeTextFile } from "./fsApi.js";
+import { listDir, readTextFile, writeTextFile, createDir } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
+import { snapshotManager } from "./term/snapshotManager.js";
 import { executeCursorAgent, spawnCursorAgentStream, listCursorModels } from "./cursorAgent.js";
 import {
   getAllSessions,
@@ -30,10 +31,14 @@ import {
   getWorkspaceByCwd,
   getLastOpenedFile,
   setLastOpenedFile,
+  getActiveRoot,
+  setActiveRoot,
   type ChatSession,
   type Message,
   type Workspace,
 } from "./db.js";
+
+const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
 
 function getRepoRoot() {
   const __filename = fileURLToPath(import.meta.url);
@@ -121,6 +126,91 @@ async function main() {
     res.json({ ok: true, roots });
   });
 
+  app.get("/api/app/active-root", (_req, res) => {
+    try {
+      const root = getActiveRoot();
+      res.json({ ok: true, root });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/app/active-root", (req, res) => {
+    try {
+      const root = String((req.body as any)?.root ?? "");
+      if (!root) return res.status(400).json({ ok: false, error: "Missing root" });
+      setActiveRoot(root);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.get("/api/term/replay/:sessionId", (req, res) => {
+    const sessionId = String(req.params.sessionId || "");
+    if (!SESSION_ID_REGEX.test(sessionId)) {
+      res.status(400).json({ error: "invalid session id" });
+      return;
+    }
+    const tailBytes = Math.max(1024, Math.min(Number(req.query.tailBytes ?? 20000), 200000));
+    const baseDir = path.join(os.homedir(), ".vibego", "term", sessionId);
+    const stdoutPath = path.join(baseDir, "stdout");
+    try {
+      if (!fs.existsSync(stdoutPath)) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const stats = fs.statSync(stdoutPath);
+      const size = stats.size;
+      const start = Math.max(0, size - tailBytes);
+      const fd = fs.openSync(stdoutPath, "r");
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      fs.closeSync(fd);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.send(buf.toString("utf8"));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? String(e) });
+    }
+  });
+
+  app.get("/api/term/snapshot/:sessionId", (req, res) => {
+    const sessionId = String(req.params.sessionId || "");
+    if (!SESSION_ID_REGEX.test(sessionId)) {
+      res.status(400).json({ error: "invalid session id" });
+      return;
+    }
+    const tailBytes = Math.max(1024, Math.min(Number(req.query.tailBytes ?? 20000), 200000));
+    void (async () => {
+      try {
+        const snap = await snapshotManager.snapshotText(sessionId);
+        if (snap) {
+          res.json({ ok: true, cols: snap.cols, rows: snap.rows, data: snap.text });
+          return;
+        }
+      } catch {}
+
+      const baseDir = path.join(os.homedir(), ".vibego", "term", sessionId);
+      const stdoutPath = path.join(baseDir, "stdout");
+      try {
+        if (!fs.existsSync(stdoutPath)) {
+          res.status(404).json({ error: "not found" });
+          return;
+        }
+        const stats = fs.statSync(stdoutPath);
+        const size = stats.size;
+        const start = Math.max(0, size - tailBytes);
+        const fd = fs.openSync(stdoutPath, "r");
+        const buf = Buffer.alloc(size - start);
+        fs.readSync(fd, buf, 0, buf.length, start);
+        fs.closeSync(fd);
+        res.json({ ok: true, data: buf.toString("utf8") });
+      } catch (e: any) {
+        res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      }
+    })();
+  });
+
   app.get("/api/list", async (req, res) => {
     try {
       const p = String(req.query.path ?? "");
@@ -146,6 +236,16 @@ async function main() {
       const p = String(req.body?.path ?? "");
       const text = typeof req.body?.text === "string" ? req.body.text : "";
       const r = await writeTextFile(roots, p, text);
+      res.json({ ok: true, ...r });
+    } catch (e: any) {
+      res.status(400).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/mkdir", async (req, res) => {
+    try {
+      const p = String(req.body?.path ?? "");
+      const r = await createDir(roots, p);
       res.json({ ok: true, ...r });
     } catch (e: any) {
       res.status(400).json({ ok: false, error: e?.message ?? String(e) });
@@ -783,4 +883,3 @@ main().catch((err) => {
   console.error("Failed to start server:", err);
   process.exit(1);
 });
-

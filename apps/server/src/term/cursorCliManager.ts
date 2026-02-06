@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TermServerMsg } from "@vibego/protocol";
+import { appendRecording, initSessionRecording } from "./recording.js";
+import { snapshotManager } from "./snapshotManager.js";
 
 type SendFn = (msg: TermServerMsg) => void;
 
@@ -21,6 +23,7 @@ interface Session {
   cwd: string;
   mode: "agent" | "plan" | "ask";
   pty: any;
+  stdoutPath: string;
 }
 
 function fileExists(p: string) {
@@ -130,16 +133,21 @@ export class CursorCliManager {
     });
 
     const sessionId = `cursor-cli-${mode}_${Math.random().toString(16).slice(2)}`;
-    const session: Session = { id: sessionId, cwd: realCwd, mode, pty: term };
+    const stdoutPath = initSessionRecording(sessionId);
+    await snapshotManager.create(sessionId, cols, rows);
+    const session: Session = { id: sessionId, cwd: realCwd, mode, pty: term, stdoutPath };
     this.sessions.set(sessionId, session);
 
     term.onData((data: string) => {
+      appendRecording(stdoutPath, data);
+      snapshotManager.write(sessionId, data);
       this.send({ t: "term.data", sessionId, data });
     });
 
     term.onExit((e: { exitCode?: number; signal?: number }) => {
       this.send({ t: "term.exit", sessionId, code: e.exitCode });
       this.sessions.delete(sessionId);
+      snapshotManager.dispose(sessionId);
     });
 
     return session;
@@ -157,12 +165,14 @@ export class CursorCliManager {
     try {
       s.pty.resize(cols, rows);
     } catch {}
+    snapshotManager.resize(sessionId, cols, rows);
   }
 
   close(sessionId: string): void {
     const s = this.sessions.get(sessionId);
     if (!s) return;
     this.sessions.delete(sessionId);
+    snapshotManager.dispose(sessionId);
     try {
       s.pty.kill();
     } catch {}
