@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { TermServerMsg } from "@vibego/protocol";
 import { appendRecording, initSessionRecording } from "./recording.js";
@@ -28,6 +30,10 @@ interface Session {
 
 function fileExists(p: string) {
   try {
+    // On Windows, check if file exists (no X_OK needed)
+    if (process.platform === "win32") {
+      return fs.existsSync(p);
+    }
     fs.accessSync(p, fs.constants.X_OK);
     return true;
   } catch {
@@ -110,9 +116,84 @@ export class CursorCliManager {
     else if (mode === "ask") args.push("--mode=ask");
 
     const baseEnv = makeCleanEnv();
-    const spawnPath = [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""]
-      .filter(Boolean)
-      .join(path.delimiter);
+    // Build PATH: ensure we include all necessary paths for Windows
+    // On Windows, we need to include WinGet Packages paths for tools like ripgrep
+    const pathParts: string[] = [];
+    
+    if (process.platform === "win32") {
+      // Add WinGet Packages base directory and scan for subdirectories
+      const winGetPackages = process.env.LOCALAPPDATA 
+        ? path.join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Packages") 
+        : "";
+      
+      if (winGetPackages && fs.existsSync(winGetPackages)) {
+        try {
+          // Scan all package directories and their subdirectories
+          const packages = fs.readdirSync(winGetPackages, { withFileTypes: true });
+          for (const pkg of packages) {
+            if (pkg.isDirectory()) {
+              const pkgPath = path.join(winGetPackages, pkg.name);
+              try {
+                // Check subdirectories (versioned folders like ripgrep-15.1.0-x86_64-pc-windows-msvc)
+                const subdirs = fs.readdirSync(pkgPath, { withFileTypes: true });
+                for (const subdir of subdirs) {
+                  if (subdir.isDirectory()) {
+                    const subdirPath = path.join(pkgPath, subdir.name);
+                    pathParts.push(subdirPath);
+                    // Also check if this subdir contains rg.exe directly
+                    const rgPath = path.join(subdirPath, "rg.exe");
+                    if (fs.existsSync(rgPath)) {
+                      // Ensure this path is at the front for priority
+                      pathParts.unshift(subdirPath);
+                    }
+                  }
+                }
+              } catch {
+                // If no subdirs, add the package directory itself
+                pathParts.push(pkgPath);
+              }
+            }
+          }
+        } catch (err) {
+          // If scanning fails, at least add the base directory
+          if (winGetPackages) pathParts.push(winGetPackages);
+        }
+      }
+      
+      // Also try to find rg.exe directly using where.exe result (if available in current process)
+      // This ensures we have the exact path that works
+      try {
+        const rgOutput = execSync("where.exe rg", { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+        if (rgOutput) {
+          const rgPath = rgOutput.split("\n")[0].trim();
+          const rgDir = path.dirname(rgPath);
+          if (rgDir && fs.existsSync(rgDir) && !pathParts.includes(rgDir)) {
+            // Add ripgrep directory at the front for highest priority
+            pathParts.unshift(rgDir);
+          }
+        }
+      } catch {
+        // where.exe might not be available or rg not found, that's okay
+      }
+      
+      // Add other common Windows locations
+      const winPaths = [
+        process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : "",
+        process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0") : "",
+        path.join(os.homedir(), ".local", "bin"),
+      ].filter(Boolean);
+      pathParts.push(...winPaths);
+    } else {
+      // Unix: add .local/bin
+      pathParts.push(path.join(os.homedir(), ".local", "bin"));
+    }
+    
+    // Add the current process PATH (should include system and user PATH)
+    if (process.env.PATH) {
+      pathParts.push(process.env.PATH);
+    }
+    
+    const spawnPath = pathParts.join(path.delimiter);
 
     const term = pty.spawn(agentBin, args, {
       name: "xterm-256color",
@@ -182,6 +263,20 @@ export class CursorCliManager {
     const override = process.env.AGENT_BIN;
     if (override && fileExists(override)) return override;
 
+    // Try Windows-specific location first
+    if (process.platform === "win32") {
+      const localAppData = process.env.LOCALAPPDATA || process.env.USERPROFILE || "";
+      if (localAppData) {
+        const winAgent = path.join(localAppData, "cursor-agent", "agent.cmd");
+        if (fileExists(winAgent)) return winAgent;
+        
+        // Also try agent.ps1
+        const winAgentPs1 = path.join(localAppData, "cursor-agent", "agent.ps1");
+        if (fileExists(winAgentPs1)) return winAgentPs1;
+      }
+    }
+
+    // Try Unix-style location
     const homeAgent = path.join(process.env.HOME ?? "", ".local", "bin", "agent");
     if (fileExists(homeAgent)) return homeAgent;
 

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { execa } from "execa";
 import type { Limits } from "./session.js";
 
@@ -27,6 +28,10 @@ function clampChunk(text: string, maxBytesLeft: number) {
 
 function fileExists(p: string) {
   try {
+    // On Windows, check if file exists (no X_OK needed)
+    if (process.platform === "win32") {
+      return fs.existsSync(p);
+    }
     fs.accessSync(p, fs.constants.X_OK);
     return true;
   } catch {
@@ -36,8 +41,10 @@ function fileExists(p: string) {
 
 async function which(binName: string): Promise<string | null> {
   try {
-    const r = await execa("which", [binName]);
-    const p = r.stdout.trim();
+    // On Windows, use where.exe instead of which
+    const cmd = process.platform === "win32" ? "where.exe" : "which";
+    const r = await execa(cmd, [binName]);
+    const p = r.stdout.trim().split("\n")[0]; // Take first result on Windows
     if (p && fileExists(p)) return p;
   } catch {}
   return null;
@@ -46,9 +53,25 @@ async function which(binName: string): Promise<string | null> {
 async function resolveCodexBin(): Promise<string> {
   const override = process.env.CODEX_BIN;
   if (override && fileExists(override)) return override;
+
+  // Try Windows-specific npm global location first (more reliable)
+  if (process.platform === "win32") {
+    const npmPrefix = process.env.APPDATA || process.env.LOCALAPPDATA || "";
+    if (npmPrefix) {
+      const winCodex = path.join(npmPrefix, "npm", "codex.cmd");
+      if (fileExists(winCodex)) return winCodex;
+      
+      // Also try without .cmd extension
+      const winCodexNoExt = path.join(npmPrefix, "npm", "codex");
+      if (fileExists(winCodexNoExt)) return winCodexNoExt;
+    }
+  }
+  
+  // Try to find codex in PATH
   const codex = await which("codex");
   if (codex) return codex;
-  throw new Error('Cannot find "codex". Install it or set CODEX_BIN=/absolute/path/to/codex.');
+
+  throw new Error('Cannot find "codex". Install it with: npm i -g @openai/codex or set CODEX_BIN=/absolute/path/to/codex.');
 }
 
 export class CodexManager {

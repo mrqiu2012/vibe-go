@@ -6,6 +6,10 @@ import { execa } from "execa";
 
 function fileExists(p: string) {
   try {
+    // On Windows, check if file exists (no X_OK needed)
+    if (process.platform === "win32") {
+      return fs.existsSync(p);
+    }
     fs.accessSync(p, fs.constants.X_OK);
     return true;
   } catch {
@@ -15,8 +19,10 @@ function fileExists(p: string) {
 
 async function which(binName: string): Promise<string | null> {
   try {
-    const r = await execa("which", [binName]);
-    const p = r.stdout.trim();
+    // On Windows, use where.exe instead of which
+    const cmd = process.platform === "win32" ? "where.exe" : "which";
+    const r = await execa(cmd, [binName]);
+    const p = r.stdout.trim().split("\n")[0]; // Take first result on Windows
     if (p && fileExists(p)) return p;
   } catch {}
   return null;
@@ -25,13 +31,30 @@ async function which(binName: string): Promise<string | null> {
 async function resolveAgentBin(): Promise<string> {
   const override = process.env.AGENT_BIN;
   if (override && fileExists(override)) return override;
+  
+  // Try to find agent in PATH
   const agent = await which("agent");
   if (agent) return agent;
 
+  // Try Windows-specific location
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || process.env.USERPROFILE || "";
+    const winAgent = path.join(localAppData, "cursor-agent", "agent.cmd");
+    if (fileExists(winAgent)) return winAgent;
+    
+    // Also try agent.ps1
+    const winAgentPs1 = path.join(localAppData, "cursor-agent", "agent.ps1");
+    if (fileExists(winAgentPs1)) return winAgentPs1;
+  }
+
+  // Try Unix-style location
   const homeAgent = path.join(process.env.HOME ?? "", ".local", "bin", "agent");
   if (fileExists(homeAgent)) return homeAgent;
 
-  throw new Error('Cannot find "agent". Install Cursor CLI: curl https://cursor.com/install -fsS | bash');
+  const installCmd = process.platform === "win32" 
+    ? "irm 'https://cursor.com/install?win32=true' | iex"
+    : "curl https://cursor.com/install -fsS | bash";
+  throw new Error(`Cannot find "agent". Install Cursor CLI: ${installCmd}`);
 }
 
 function makeCleanEnv() {
@@ -205,7 +228,9 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
       LANG: process.env.LANG ?? "en_US.UTF-8",
     },
     stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
+    // On Windows, detached breaks stdout/stderr pipes for .cmd targets.
+    detached: process.platform !== "win32",
+    windowsHide: true,
   });
 
   const stop = () => killProcessTree(child);

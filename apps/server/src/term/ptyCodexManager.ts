@@ -32,6 +32,10 @@ function randomId() {
 
 function fileExists(p: string) {
   try {
+    // On Windows, check if file exists (no X_OK needed)
+    if (process.platform === "win32") {
+      return fs.existsSync(p);
+    }
     fs.accessSync(p, fs.constants.X_OK);
     return true;
   } catch {
@@ -41,8 +45,10 @@ function fileExists(p: string) {
 
 async function which(binName: string): Promise<string | null> {
   try {
-    const r = await execa("which", [binName]);
-    const p = r.stdout.trim();
+    // On Windows, use where.exe instead of which
+    const cmd = process.platform === "win32" ? "where.exe" : "which";
+    const r = await execa(cmd, [binName]);
+    const p = r.stdout.trim().split("\n")[0]; // Take first result on Windows
     if (p && fileExists(p)) return p;
   } catch {}
   return null;
@@ -51,9 +57,25 @@ async function which(binName: string): Promise<string | null> {
 async function resolveCodexBin(): Promise<string> {
   const override = process.env.CODEX_BIN;
   if (override && fileExists(override)) return override;
+
+  // Try Windows-specific npm global location first (more reliable)
+  if (process.platform === "win32") {
+    const npmPrefix = process.env.APPDATA || process.env.LOCALAPPDATA || "";
+    if (npmPrefix) {
+      const winCodex = path.join(npmPrefix, "npm", "codex.cmd");
+      if (fileExists(winCodex)) return winCodex;
+      
+      // Also try without .cmd extension
+      const winCodexNoExt = path.join(npmPrefix, "npm", "codex");
+      if (fileExists(winCodexNoExt)) return winCodexNoExt;
+    }
+  }
+  
+  // Try to find codex in PATH
   const codex = await which("codex");
   if (codex) return codex;
-  throw new Error('Cannot find "codex". Install it or set CODEX_BIN=/absolute/path/to/codex.');
+
+  throw new Error('Cannot find "codex". Install it with: npm i -g @openai/codex or set CODEX_BIN=/absolute/path/to/codex.');
 }
 
 async function loadPty(): Promise<Pty> {
@@ -115,8 +137,8 @@ export class PtyCodexManager {
       }
     })();
     const cmd = codexReal.endsWith(".js") || codexReal.endsWith(".cjs") ? process.execPath : codexBin;
-    // --no-alt-screen: avoid alternate screen mode so the TUI works reliably in an embedded PTY (e.g. web terminal).
-    const args = cmd === process.execPath ? [codexReal, "--no-alt-screen"] : ["--no-alt-screen"];
+    // Codex CLI doesn't support --no-alt-screen, so we just run it without extra args
+    const args = cmd === process.execPath ? [codexReal] : [];
 
     const spawnPath = [path.dirname(codexBin), path.dirname(process.execPath), process.env.PATH ?? ""].filter(Boolean).join(path.delimiter);
 
