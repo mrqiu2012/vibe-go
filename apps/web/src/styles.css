@@ -571,6 +571,39 @@ input {
   cursor: pointer;
 }
 
+.fileTreeNode {
+  position: relative;
+}
+
+.fileRowLeft {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  /* padding-left: calc(1px + var(--tree-indent, 0px)); */
+}
+
+.fileCaret {
+  width: 12px;
+  flex: 0 0 12px;
+  text-align: center;
+}
+
+.fileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileChildren {
+  padding-left: 10px;
+  margin-left: 13px;
+}
+
+.fileChildrenNested {
+  border-left: 1px solid var(--border);
+}
+
 .dirActions {
   display: inline-flex;
   align-items: center;

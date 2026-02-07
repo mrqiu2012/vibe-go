@@ -239,22 +239,21 @@ function TreeView(props: {
   }, [copyOpen]);
 
   return (
-    <div>
+    <div className="fileTreeNode" data-depth={depth} style={{ ["--tree-indent" as any]: `${indent}px` }}>
       <div
         className={"fileRow" + (isActive ? " fileRowActive" : "")}
         data-path={node.path}
-        style={{ paddingLeft: 8 + indent }}
         onClick={() => {
           if (node.type === "dir") props.onToggleDir(node);
           else if (node.type === "file") props.onOpenFile(node);
         }}
         title={node.path}
       >
-        <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
-          <span style={{ color: node.type === "dir" ? "var(--accent)" : "var(--text)" }}>
+        <div className="fileRowLeft">
+          <span className="fileCaret" style={{ color: node.type === "dir" ? "var(--accent)" : "var(--text)" }}>
             {node.type === "dir" ? (node.expanded ? "▾" : "▸") : " "}
           </span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</span>
+          <span className="fileName">{node.name}</span>
           {node.loading ? <span className="fileMeta">加载中…</span> : null}
         </div>
 
@@ -285,7 +284,7 @@ function TreeView(props: {
       </div>
 
       {node.type === "dir" && node.expanded ? (
-        <div>
+        <div className={"fileChildren" + (depth > 0 ? " fileChildrenNested" : "")}>
           {node.children?.map((c) => (
             <TreeView
               key={c.path}
@@ -356,6 +355,7 @@ export function App() {
     Record<string, { text: string; dirty: boolean; info: { size: number; mtimeMs: number } | null }>
   >({});
   const restoredRootRef = useRef<string>("");
+  const [explorerUserPath, setExplorerUserPath] = useState<string>("");
 
   const activeState = activeFile ? fileStateByPath[activeFile] : undefined;
   const fileText = activeState?.text ?? "";
@@ -855,11 +855,12 @@ export function App() {
 
   const explorerTargetPath = useMemo(() => {
     if (!activeRoot) return "";
+    if (explorerUserPath && explorerUserPath.startsWith(activeRoot)) return explorerUserPath;
     if (projectCwd && projectCwd.startsWith(activeRoot)) return projectCwd;
     const saved = localStorage.getItem(`vibego:lastExplorerPath:${activeRoot}`) || "";
     if (saved && saved.startsWith(activeRoot)) return saved;
     return activeRoot;
-  }, [activeRoot, projectCwd]);
+  }, [activeRoot, projectCwd, explorerUserPath]);
 
   useEffect(() => {
     lastSyncedExplorerRootRef.current = "";
@@ -1039,6 +1040,7 @@ export function App() {
   }, [activeRoot, activeFile, openTabs.length]);
 
   const toggleDir = async (node: TreeNode) => {
+    setExplorerUserPath(node.path);
     // Collapse
     if (node.expanded) {
       setTree((prev) => (prev ? updateNode(prev, node.path, (n) => ({ ...n, expanded: false })) : prev));
@@ -1736,7 +1738,7 @@ export function App() {
               )}
               {!panelExplorerCollapsed && (
                 <div className="row" style={{ marginLeft: "auto" }}>
-                  <select
+                <select
                     className="select"
                     value={activeRoot}
                     onChange={(e) => {
@@ -1747,6 +1749,7 @@ export function App() {
                       setActiveFile("");
                       setFileStateByPath({});
                       setEditorMode("edit");
+                    setExplorerUserPath(e.target.value);
                     }}
                     disabled={roots.length === 0}
                     title="根目录"
@@ -2259,6 +2262,7 @@ export function App() {
                 setActiveFile("");
                 setFileStateByPath({});
                 setEditorMode("edit");
+                setExplorerUserPath(e.target.value);
               }}
               disabled={roots.length === 0}
               title="根目录"
