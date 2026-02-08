@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "init-db": "pnpm --filter @vibego/server run init-db",
     "dev": "concurrently -n protocol,server,web -c auto --kill-others-on-fail=false \"pnpm --filter @vibego/protocol dev\" \"pnpm --filter @vibego/server dev\" \"pnpm --filter @vibego/web dev\"",
     "control": "pnpm --filter @vibego/control dev",
     "build": "pnpm -r build",

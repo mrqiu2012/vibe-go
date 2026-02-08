@@ -262,10 +262,11 @@ export function CursorChatPanel({
   const runIdRef = useRef<string | null>(null);
   const assistantIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string>("");
-  const offsetRef = useRef(0);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopRequestedRef = useRef(false);
   const handlerRef = useRef<ReturnType<typeof buildStreamHandler> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const streamDeadRef = useRef(false);
+  const loadingRef = useRef(false);
 
   // Load sessions from database on mount or cwd change (skip when cwd not yet set)
   useEffect(() => {
@@ -317,13 +318,8 @@ export function CursorChatPanel({
   }, [currentSessionId]);
 
   useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-  }, []);
+    loadingRef.current = loading;
+  }, [loading]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -339,9 +335,9 @@ export function CursorChatPanel({
     return () => clearTimeout(timer);
   }, [messages, currentSessionId, updateCurrentSession]);
 
-  // 关掉网页再打开：若本地有该会话的未结束 run，恢复轮询并继续拉输出
+  // 方案 A：关掉网页再打开 — 用 runId 重连 GET /api/cursor-agent/stream/:runId，先拿缓冲再追新
   useEffect(() => {
-    if (!cwd || !currentSessionId || pollIntervalRef.current) return;
+    if (!cwd || !currentSessionId) return;
     const stored = loadStoredRun();
     if (!stored || stored.cwd !== cwd || stored.sessionId !== currentSessionId) return;
 
@@ -352,71 +348,143 @@ export function CursorChatPanel({
     runIdRef.current = stored.runId;
     assistantIdRef.current = stored.assistantId;
     sessionIdRef.current = stored.sessionId;
-    offsetRef.current = stored.offset;
     setLoading(true);
+    streamDeadRef.current = false;
     handlerRef.current = buildStreamHandler(stored.assistantId, setMessages, (sid) => setChatId(sid));
 
-    const poll = async () => {
-      const rid = runIdRef.current;
-      const offset = offsetRef.current;
-      const handler = handlerRef.current;
-      if (!rid || !handler) return;
+    let cancelled = false;
+    (async () => {
+      const rid = stored.runId;
       try {
-        const r = await fetch(`/api/cursor-agent/task/${rid}/output?offset=${offset}`);
+        const r = await fetch(`/api/cursor-agent/stream/${rid}`);
+        if (cancelled) return;
         if (!r.ok) {
-          if (r.status === 404) return;
-          clearStoredRun();
-          setLoading(false);
-          runIdRef.current = null;
-          assistantIdRef.current = null;
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
+          if (r.status === 404) {
+            clearStoredRun();
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            handlerRef.current = null;
           }
           return;
         }
-        const out = await r.json();
-        if (!out.ok) return;
-        const output = String(out.output ?? "");
-        const lines = output.split("\n");
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
+        const reader = r.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (cancelled) return;
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          const handler = handlerRef.current;
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (handler) {
+              try {
+                handler.handleEvent(JSON.parse(trimmed));
+              } catch {
+                handler.appendMetaLine(trimmed);
+              }
+            }
+          }
+        }
+        if (buf.trim() && handlerRef.current) {
           try {
-            handler.handleEvent(JSON.parse(trimmed));
+            handlerRef.current.handleEvent(JSON.parse(buf.trim()));
           } catch {
-            handler.appendMetaLine(trimmed);
+            handlerRef.current.appendMetaLine(buf.trim());
           }
         }
-        offsetRef.current = Number(out.nextOffset) || offset;
-        if (sessionIdRef.current && assistantIdRef.current) {
-          saveStoredRun(cwd, sessionIdRef.current, rid, assistantIdRef.current, offsetRef.current);
-        }
-        if (out.ended) {
+        if (!cancelled) {
           clearStoredRun();
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-          }
           setLoading(false);
           runIdRef.current = null;
           assistantIdRef.current = null;
           handlerRef.current = null;
         }
       } catch {
-        // ignore
+        if (!cancelled) {
+          streamDeadRef.current = true;
+        }
       }
-    };
-
-    pollIntervalRef.current = setInterval(poll, 600);
-    void poll();
+    })();
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
+      cancelled = true;
     };
   }, [cwd, currentSessionId]);
+
+  // 方案 A：从后台回到前台时，若流已断则用 runId 重连
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!loadingRef.current || !runIdRef.current || !streamDeadRef.current) return;
+      const rid = runIdRef.current;
+      const handler = handlerRef.current;
+      const cwdNow = cwd;
+      const sessionIdNow = sessionIdRef.current;
+      const assistantIdNow = assistantIdRef.current;
+      if (!handler || !cwdNow || !sessionIdNow || !assistantIdNow) return;
+      streamDeadRef.current = false;
+      (async () => {
+        try {
+          const r = await fetch(`/api/cursor-agent/stream/${rid}`);
+          if (!r.ok) {
+            if (r.status === 404) {
+              clearStoredRun();
+              setLoading(false);
+              runIdRef.current = null;
+              assistantIdRef.current = null;
+              handlerRef.current = null;
+            }
+            return;
+          }
+          const reader = r.body?.getReader();
+          if (!reader) return;
+          const decoder = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            const h = handlerRef.current;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              if (h) {
+                try {
+                  h.handleEvent(JSON.parse(trimmed));
+                } catch {
+                  h.appendMetaLine(trimmed);
+                }
+              }
+            }
+          }
+          if (buf.trim() && handlerRef.current) {
+            try {
+              handlerRef.current.handleEvent(JSON.parse(buf.trim()));
+            } catch {
+              handlerRef.current.appendMetaLine(buf.trim());
+            }
+          }
+          clearStoredRun();
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          handlerRef.current = null;
+        } catch {
+          streamDeadRef.current = true;
+        }
+      })();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [cwd]);
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
@@ -460,15 +528,15 @@ export function CursorChatPanel({
     runIdRef.current = null;
     assistantIdRef.current = assistantId;
     sessionIdRef.current = sessionId;
-    offsetRef.current = 0;
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
+    streamDeadRef.current = false;
+    handlerRef.current = buildStreamHandler(assistantId, setMessages, (sid) => setChatId(sid));
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
 
     try {
       const resume = chatId || undefined;
-      const resp = await fetch("/api/cursor-agent/start", {
+      const resp = await fetch("/api/cursor-agent/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -479,9 +547,11 @@ export function CursorChatPanel({
           resume,
           model: selectedModel || "auto",
         }),
+        signal: ac.signal,
       });
 
       if (!resp.ok) {
+        if (ac.signal.aborted) return;
         let errText = `请求失败 (${resp.status})`;
         try {
           const j = await resp.json();
@@ -490,80 +560,82 @@ export function CursorChatPanel({
         throw new Error(errText);
       }
 
-      const data = await resp.json();
-      const runId = data.runId;
-      if (!runId) throw new Error("服务端未返回 runId");
+      const runId = resp.headers.get("X-Run-Id")?.trim();
+      if (!runId) throw new Error("服务端未返回 X-Run-Id");
 
       runIdRef.current = runId;
       saveStoredRun(cwd, sessionId, runId, assistantId, 0);
-      handlerRef.current = buildStreamHandler(assistantId, setMessages, (sid) => setChatId(sid));
 
-      const poll = async () => {
-        const rid = runIdRef.current;
-        const offset = offsetRef.current;
-        const handler = handlerRef.current;
-        if (!rid || !handler) return;
+      const reader = resp.body?.getReader();
+      if (!reader) throw new Error("无响应体");
 
-        try {
-          const r = await fetch(`/api/cursor-agent/task/${rid}/output?offset=${offset}`);
-          if (!r.ok) {
-            if (r.status === 404) return;
-            const j = await r.json().catch(() => ({}));
-            setMessages((prev) =>
-              updateMessageById(prev, assistantIdRef.current!, {
-                content: (prev.find((m) => m.id === assistantIdRef.current)?.content || "") + `\n轮询失败: ${j?.error ?? r.status}`,
-              }),
-            );
-            if (pollIntervalRef.current) {
-              clearInterval(pollIntervalRef.current);
-              pollIntervalRef.current = null;
-            }
-            clearStoredRun();
-            setLoading(false);
-            runIdRef.current = null;
-            assistantIdRef.current = null;
-            return;
-          }
-
-          const out = await r.json();
-          if (!out.ok) return;
-
-          const output = String(out.output ?? "");
-          const lines = output.split("\n");
+      const decoder = new TextDecoder();
+      let buf = "";
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (ac.signal.aborted || stopRequestedRef.current) break;
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          const handler = handlerRef.current;
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed) continue;
-            try {
-              handler.handleEvent(JSON.parse(trimmed));
-            } catch {
-              handler.appendMetaLine(trimmed);
+            if (handler) {
+              try {
+                handler.handleEvent(JSON.parse(trimmed));
+              } catch {
+                handler.appendMetaLine(trimmed);
+              }
             }
           }
-
-          offsetRef.current = Number(out.nextOffset) || offset;
-          if (sessionIdRef.current && assistantIdRef.current) {
-            saveStoredRun(cwd, sessionIdRef.current, rid, assistantIdRef.current, offsetRef.current);
-          }
-
-          if (out.ended) {
-            clearStoredRun();
-            if (pollIntervalRef.current) {
-              clearInterval(pollIntervalRef.current);
-              pollIntervalRef.current = null;
-            }
-            setLoading(false);
-            runIdRef.current = null;
-            assistantIdRef.current = null;
-            handlerRef.current = null;
-          }
-        } catch {
-          // ignore network errors, will retry next poll
         }
-      };
+        if (buf.trim() && handlerRef.current && !ac.signal.aborted) {
+          try {
+            handlerRef.current.handleEvent(JSON.parse(buf.trim()));
+          } catch {
+            handlerRef.current.appendMetaLine(buf.trim());
+          }
+        }
 
-      pollIntervalRef.current = setInterval(poll, 600);
-      void poll();
+        if (ac.signal.aborted || stopRequestedRef.current) {
+          streamDeadRef.current = true;
+          clearStoredRun();
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          handlerRef.current = null;
+        } else {
+          clearStoredRun();
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          handlerRef.current = null;
+        }
+      } catch (readErr: any) {
+        if (ac.signal.aborted || stopRequestedRef.current) {
+          streamDeadRef.current = true;
+          clearStoredRun();
+          setLoading(false);
+          runIdRef.current = null;
+          assistantIdRef.current = null;
+          handlerRef.current = null;
+        } else {
+          streamDeadRef.current = true;
+          setMessages((prev) =>
+            updateMessageById(prev, assistantId, {
+              content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n[连接断开，回到前台将自动重连]`,
+            }),
+          );
+        }
+      }
     } catch (e: any) {
+      if (ac.signal.aborted || stopRequestedRef.current) {
+        streamDeadRef.current = true;
+        return;
+      }
       clearStoredRun();
       setMessages((prev) =>
         updateMessageById(prev, assistantId, {
@@ -573,10 +645,9 @@ export function CursorChatPanel({
       setLoading(false);
       runIdRef.current = null;
       assistantIdRef.current = null;
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
+      handlerRef.current = null;
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 
@@ -585,11 +656,10 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
     }
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
     runIdRef.current = null;
     assistantIdRef.current = null;
@@ -606,11 +676,10 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
     }
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
     runIdRef.current = null;
     assistantIdRef.current = null;
@@ -642,9 +711,12 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/task/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
     }
-    // 不立即清轮询和 loading，让轮询再拉几次以拿到「[完成] 信号=...」再结束
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    // 不立即清 loading，等流读到 result 帧后再结束
   };
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {

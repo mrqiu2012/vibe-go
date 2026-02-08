@@ -712,6 +712,8 @@ input {
 
 .termAreaWrap {
   position: relative;
+  --term-kb-bottom: 0px;
+  --term-mobile-controls-h: 0px;
 }
 
 .termPane {
@@ -722,6 +724,11 @@ input {
   overflow: hidden;
   position: absolute;
   inset: 0;
+}
+
+.termAreaWrap .termPane {
+  /* When mobile keyboard overlays the viewport, JS sets --term-kb-bottom to push panes up. */
+  bottom: var(--term-kb-bottom, 0px);
 }
 
 .termPaneHidden {
@@ -735,21 +742,28 @@ input {
 }
 
 .termAreaWrapWithKeys .termPane {
-  bottom: calc(48px + var(--keyboard-offset, 0px));
+  /* Measured height of the mobile controls (dpad + input) */
+  bottom: calc(var(--term-mobile-controls-h, 0px) + var(--term-kb-bottom, 0px));
 }
 
-.termMobileKeys {
+.termMobileControls {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--keyboard-offset, 0px) + env(safe-area-inset-bottom, 0px));
+  bottom: var(--term-kb-bottom, 0px);
   display: flex;
+  flex-direction: column;
   gap: 6px;
   padding: 6px;
   border-top: 1px solid var(--border);
   background: var(--panel);
   flex-shrink: 0;
   z-index: 5;
+}
+
+.termMobileKeysRow {
+  display: flex;
+  gap: 6px;
 }
 
 .termMobileKeyBtn {
@@ -774,7 +788,7 @@ input {
 }
 
 @media (min-width: 901px) {
-  .termMobileKeys {
+  .termMobileControls {
     display: none;
   }
 }
@@ -1772,4 +1786,462 @@ input {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* ==================== Setup / 配置安装引导页 ==================== */
+.setupPage {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-family, "Plus Jakarta Sans", system-ui, sans-serif);
+  padding: 24px 16px 48px;
+  box-sizing: border-box;
+}
+
+.setupHeader {
+  max-width: 720px;
+  margin: 0 auto 32px;
+  text-align: center;
+}
+
+.setupTitle {
+  margin: 0 0 8px;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.setupSubtitle {
+  margin: 0 0 20px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.setupPlatformTag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--panel2);
+  border-radius: 6px;
+}
+
+.setupStepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.setupStepperDot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--panel2);
+  border: 2px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.setupStepperDotActive {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.setupStepperDotDone {
+  background: #059669;
+  border-color: #059669;
+  color: #fff;
+}
+
+.setupStepperLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin-left: 4px;
+}
+
+.setupStepBody {
+  margin-top: 0;
+}
+
+.setupStepActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.setupSkipRow {
+  margin-top: 16px;
+  align-items: center;
+}
+
+.setupSkipBtn {
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.setupSkipBtn:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.setupSkipHint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.setupPrimaryBtn {
+  padding: 10px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.setupPrimaryBtn:hover:not(:disabled) {
+  background: var(--accent2);
+}
+
+.setupPrimaryBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.setupMain {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.setupSection {
+  margin-bottom: 28px;
+  padding: 20px;
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.setupSection h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.setupSection p,
+.setupSection ul {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.setupSection ul {
+  padding-left: 1.25rem;
+}
+
+.setupSection code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--panel2);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.setupCode {
+  margin: 10px 0;
+  padding: 14px 16px;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.setupCode code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+.setupNote {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.setupVerify {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.setupSecondaryBtn {
+  padding: 8px 16px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.setupSecondaryBtn:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.setupSecondaryBtn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.setupStatus {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.setupStatusOk {
+  color: #059669;
+}
+
+.setupStatusFail {
+  color: #dc2626;
+}
+
+.setupFooter {
+  text-align: center;
+  padding-top: 24px;
+}
+
+.setupLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+  padding: 24px;
+  color: var(--muted);
+}
+
+.setupError {
+  border-left: 4px solid #dc2626;
+}
+
+.setupRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.setupHint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.setupSelectRoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.setupSelect {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.setupSelect option {
+  font-family: var(--mono);
+}
+
+.setupTextarea {
+  width: 100%;
+  min-height: 80px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--panel);
+  color: var(--text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.setupTextarea::placeholder {
+  color: var(--muted);
+}
+
+.setupManualRoot {
+  margin-top: 8px;
+}
+
+.setupInput {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.setupInput::placeholder {
+  color: var(--muted);
+}
+
+.setupRootList {
+  margin: 8px 0 0;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+
+.setupRootItem {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.setupRootItem code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.setupToolGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.setupToolCard {
+  padding: 12px 14px;
+  background: var(--panel2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.setupToolName {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.setupToolStatus {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.setupInstallBtn {
+  padding: 4px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.setupInstallBtn:hover:not(:disabled) {
+  background: var(--accent2);
+}
+
+.setupInstallBtn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.setupToolHint {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  word-break: break-all;
+  background: transparent;
+  padding: 0;
+}
+
+.setupToggleBtn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.setupToggleBtn:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.setupStepTitle {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.setupStepTitle:first-of-type {
+  margin-top: 0;
+}
+
+.setupLink {
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.setupLink:hover {
+  color: var(--accent);
 }

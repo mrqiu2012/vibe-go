@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
 // Types
 export type Message = {
@@ -31,28 +32,33 @@ export type Workspace = {
 let db: Database.Database | null = null;
 
 function getDbPath(): string {
-  // Store database in user's home directory
-  const homeDir = process.env.HOME || process.env.USERPROFILE || ".";
+  // Store database in user's home directory (os.homedir() is more reliable than env)
+  const homeDir = typeof os.homedir === "function" ? os.homedir() : process.env.HOME || process.env.USERPROFILE || ".";
   const dataDir = path.join(homeDir, ".vibego");
-  
+
   // Ensure directory exists
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  
+
   return path.join(dataDir, "chat_history.db");
 }
 
 export function getDb(): Database.Database {
   if (!db) {
-    const dbPath = getDbPath();
-    db = new Database(dbPath);
-    
-    // Enable WAL mode for better performance
-    db.pragma("journal_mode = WAL");
-    
-    // Initialize schema
-    initSchema(db);
+    try {
+      const dbPath = getDbPath();
+      db = new Database(dbPath);
+
+      // Enable WAL mode for better performance
+      db.pragma("journal_mode = WAL");
+
+      // Initialize schema
+      initSchema(db);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Database init failed: ${msg}`);
+    }
   }
   return db;
 }

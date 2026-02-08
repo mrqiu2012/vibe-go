@@ -362,6 +362,7 @@ export function App() {
   const dirty = activeState?.dirty ?? false;
   const fileInfo = activeState?.info ?? null;
 
+  const termAreaWrapRef = useRef<HTMLDivElement | null>(null);
   const termDivRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -397,6 +398,9 @@ export function App() {
   const [createModalParent, setCreateModalParent] = useState("");
   const createModalInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileKeysVisible, setMobileKeysVisible] = useState(false);
+  const mobileKeysTouchedRef = useRef(false);
+  const termMobileControlsRef = useRef<HTMLDivElement | null>(null);
+  const lastMobileControlsHRef = useRef<number>(-1);
   const collapsedPanelWidth = 48;
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -518,22 +522,10 @@ export function App() {
 
   useEffect(() => {
     if (!isMobile) return;
-    if (!window.visualViewport) return;
-    const vv = window.visualViewport;
-    const root = document.documentElement;
-    const update = () => {
-      const keyboardOffset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      root.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
-    };
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-      root.style.removeProperty("--keyboard-offset");
-    };
-  }, [isMobile]);
+    if (termMode === "cursor") return;
+    if (mobileKeysTouchedRef.current) return;
+    setMobileKeysVisible(true);
+  }, [isMobile, termMode]);
 
   useEffect(() => {
     if (!isDragging) return;
@@ -610,6 +602,122 @@ export function App() {
       // ignore
     }
   }, []);
+
+  // Mobile: when the on-screen keyboard overlays the bottom area (iOS Safari), push the terminal panes up
+  // by the measured keyboard height. This keeps the last rows visible and lets xterm refit cleanly.
+  useEffect(() => {
+    const wrap = termAreaWrapRef.current;
+    if (!wrap) return;
+
+    if (!isMobile || !terminalVisible || termMode === "cursor") {
+      wrap.style.setProperty("--term-kb-bottom", "0px");
+      return;
+    }
+
+    let raf = 0;
+    let lastApplied = -1;
+    const vv = window.visualViewport ?? null;
+
+    const computeKeyboardBottom = () => {
+      if (!vv) return 0;
+      // When the keyboard is open on iOS Safari, innerHeight often stays stable while visualViewport shrinks.
+      const px = Math.round(window.innerHeight - (vv.height + vv.offsetTop));
+      // Avoid reacting to minor chrome/address-bar changes; keyboard is usually much larger.
+      return px >= 80 ? px : 0;
+    };
+
+    const applyNow = () => {
+      const kb = computeKeyboardBottom();
+      if (kb === lastApplied) return;
+      lastApplied = kb;
+      wrap.style.setProperty("--term-kb-bottom", `${kb}px`);
+      // Let layout settle, then refit xterm so rows/cols match the new height.
+      requestAnimationFrame(() => {
+        safeFitTerm();
+        setTimeout(safeFitTerm, 50);
+      });
+    };
+
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        applyNow();
+      });
+    };
+
+    applyNow();
+    vv?.addEventListener("resize", schedule);
+    vv?.addEventListener("scroll", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    window.addEventListener("focusin", schedule);
+    window.addEventListener("focusout", schedule);
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      vv?.removeEventListener("resize", schedule);
+      vv?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+      window.removeEventListener("focusin", schedule);
+      window.removeEventListener("focusout", schedule);
+      wrap.style.setProperty("--term-kb-bottom", "0px");
+    };
+  }, [isMobile, terminalVisible, termMode, safeFitTerm]);
+
+  // Mobile: measure the height of the "dpad + input" controls so panes can be lifted precisely
+  // (instead of hardcoding a padding/bottom value).
+  useEffect(() => {
+    const wrap = termAreaWrapRef.current;
+    if (!wrap) return;
+
+    if (!isMobile || !terminalVisible || termMode === "cursor" || !mobileKeysVisible) {
+      wrap.style.setProperty("--term-mobile-controls-h", "0px");
+      lastMobileControlsHRef.current = -1;
+      return;
+    }
+
+    const controls = termMobileControlsRef.current;
+    if (!controls) {
+      wrap.style.setProperty("--term-mobile-controls-h", "0px");
+      lastMobileControlsHRef.current = -1;
+      return;
+    }
+
+    let raf = 0;
+    const applyNow = () => {
+      const h = Math.max(0, Math.ceil(controls.getBoundingClientRect().height));
+      if (h === lastMobileControlsHRef.current) return;
+      lastMobileControlsHRef.current = h;
+      wrap.style.setProperty("--term-mobile-controls-h", `${h}px`);
+      requestAnimationFrame(() => {
+        safeFitTerm();
+        setTimeout(safeFitTerm, 50);
+      });
+    };
+
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        applyNow();
+      });
+    };
+
+    applyNow();
+    const ro = new ResizeObserver(schedule);
+    ro.observe(controls);
+    window.addEventListener("resize", schedule);
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("resize", schedule);
+      wrap.style.setProperty("--term-mobile-controls-h", "0px");
+      lastMobileControlsHRef.current = -1;
+    };
+  }, [isMobile, terminalVisible, termMode, mobileKeysVisible, safeFitTerm]);
 
   // Sometimes after switching Cursor <-> Codex/Restricted, the terminal container DOM may be re-created
   // (or third-party children removed), leaving the term div empty:
@@ -1737,7 +1845,10 @@ export function App() {
                 <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
               )}
               {!panelExplorerCollapsed && (
-                <div className="row" style={{ marginLeft: "auto" }}>
+                <div className="row" style={{ marginLeft: "auto", gap: 8, alignItems: "center" }}>
+                <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)" }}>
+                  安装指南
+                </a>
                 <select
                     className="select"
                     value={activeRoot}
@@ -2124,7 +2235,10 @@ export function App() {
                         type="button"
                         className="termPasteBtn"
                         title={mobileKeysVisible ? "隐藏方向键" : "显示方向键"}
-                        onClick={() => setMobileKeysVisible((v) => !v)}
+                        onClick={() => {
+                          mobileKeysTouchedRef.current = true;
+                          setMobileKeysVisible((v) => !v);
+                        }}
                       >
                         {mobileKeysVisible ? "键盘" : "方向键"}
                       </button>
@@ -2143,6 +2257,7 @@ export function App() {
                   ? " termAreaWrapWithKeys"
                   : "")
               }
+              ref={termAreaWrapRef}
               tabIndex={0}
               onKeyDown={handleTermKeyDown}
               style={{
@@ -2184,62 +2299,64 @@ export function App() {
                 onTouchStart={() => termRef.current?.focus()}
               />
               {isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible ? (
-                <div className="termMobileKeys">
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[A");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[B");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Down
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[D");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Left
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[C");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Right
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn termMobileKeyEnter"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\r");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Enter
-                  </button>
+                <div className="termMobileControls" ref={termMobileControlsRef}>
+                  <div className="termMobileKeysRow">
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[A");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Up
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[B");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Down
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[D");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Left
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[C");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Right
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn termMobileKeyEnter"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\r");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Enter
+                    </button>
+                  </div>
                 </div>
               ) : null}
                 </div>
@@ -2274,7 +2391,9 @@ export function App() {
                 </option>
               ))}
             </select>
-
+            <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)", flexShrink: 0 }}>
+              安装
+            </a>
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
                 文件
@@ -2437,7 +2556,6 @@ export function App() {
             </div>
             <div className="panelHeader termPanelHeader">
               <div className="termPanelHeaderRow">
-                <h2>终端</h2>
                 <div className="segmented" aria-label="终端模式">
                   <button
                     className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
@@ -2476,6 +2594,19 @@ export function App() {
                     粘贴
                   </button>
                 )}
+                {isMobile && termMode !== "cursor" ? (
+                  <button
+                    type="button"
+                    className="termPasteBtn"
+                    title={mobileKeysVisible ? "隐藏方向键" : "显示方向键"}
+                    onClick={() => {
+                      mobileKeysTouchedRef.current = true;
+                      setMobileKeysVisible((v) => !v);
+                    }}
+                  >
+                    {mobileKeysVisible ? "键盘" : "方向键"}
+                  </button>
+                ) : null}
               </div>
               <div className="termPanelHeaderCwd" title={terminalCwd}>
                 {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
@@ -2488,6 +2619,7 @@ export function App() {
                   ? " termAreaWrapWithKeys"
                   : "")
               }
+              ref={termAreaWrapRef}
               tabIndex={0}
               onKeyDown={handleTermKeyDown}
               style={{
@@ -2529,62 +2661,64 @@ export function App() {
                 onTouchStart={() => termRef.current?.focus()}
               />
               {isMobile && terminalVisible && termMode !== "cursor" && mobileKeysVisible ? (
-                <div className="termMobileKeys">
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[A");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[B");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Down
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[D");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Left
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\x1b[C");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Right
-                  </button>
-                  <button
-                    type="button"
-                    className="termMobileKeyBtn termMobileKeyEnter"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      sendTermInput("\r");
-                      termRef.current?.focus();
-                    }}
-                  >
-                    Enter
-                  </button>
+                <div className="termMobileControls" ref={termMobileControlsRef}>
+                  <div className="termMobileKeysRow">
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[A");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Up
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[B");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Down
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[D");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Left
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\x1b[C");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Right
+                    </button>
+                    <button
+                      type="button"
+                      className="termMobileKeyBtn termMobileKeyEnter"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        sendTermInput("\r");
+                        termRef.current?.focus();
+                      }}
+                    >
+                      Enter
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </div>
