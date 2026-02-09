@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { apiUrl } from "../api";
 
 type Message = {
   id: string;
@@ -135,7 +136,7 @@ const CURSOR_MODELS: ModelOption[] = [
 
 async function fetchSessions(cwd: string): Promise<ChatSession[]> {
   try {
-    const res = await fetch(`/api/chat/sessions?cwd=${encodeURIComponent(cwd)}`);
+    const res = await fetch(apiUrl(`/api/chat/sessions?cwd=${encodeURIComponent(cwd)}`));
     const data = await res.json();
     if (data.ok) return data.sessions;
     return [];
@@ -146,7 +147,7 @@ async function fetchSessions(cwd: string): Promise<ChatSession[]> {
 
 async function createSessionApi(session: ChatSession): Promise<ChatSession | null> {
   try {
-    const res = await fetch("/api/chat/sessions", {
+    const res = await fetch(apiUrl("/api/chat/sessions"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(session),
@@ -161,7 +162,7 @@ async function createSessionApi(session: ChatSession): Promise<ChatSession | nul
 
 async function updateSessionApi(session: ChatSession): Promise<boolean> {
   try {
-    const res = await fetch(`/api/chat/sessions/${session.id}`, {
+    const res = await fetch(apiUrl(`/api/chat/sessions/${session.id}`), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -179,7 +180,7 @@ async function updateSessionApi(session: ChatSession): Promise<boolean> {
 
 async function deleteSessionApi(sessionId: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/chat/sessions/${sessionId}`, {
+    const res = await fetch(apiUrl(`/api/chat/sessions/${sessionId}`), {
       method: "DELETE",
     });
     const data = await res.json();
@@ -191,7 +192,7 @@ async function deleteSessionApi(sessionId: string): Promise<boolean> {
 
 async function updateMessageApi(messageId: string, content: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/chat/messages/${messageId}`, {
+    const res = await fetch(apiUrl(`/api/chat/messages/${messageId}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
@@ -356,7 +357,7 @@ export function CursorChatPanel({
     (async () => {
       const rid = stored.runId;
       try {
-        const r = await fetch(`/api/cursor-agent/stream/${rid}`);
+        const r = await fetch(apiUrl(`/api/cursor-agent/stream/${rid}`));
         if (cancelled) return;
         if (!r.ok) {
           if (r.status === 404) {
@@ -431,7 +432,7 @@ export function CursorChatPanel({
       streamDeadRef.current = false;
       (async () => {
         try {
-          const r = await fetch(`/api/cursor-agent/stream/${rid}`);
+          const r = await fetch(apiUrl(`/api/cursor-agent/stream/${rid}`));
           if (!r.ok) {
             if (r.status === 404) {
               clearStoredRun();
@@ -536,7 +537,7 @@ export function CursorChatPanel({
 
     try {
       const resume = chatId || undefined;
-      const resp = await fetch("/api/cursor-agent/stream", {
+      const resp = await fetch(apiUrl("/api/cursor-agent/stream"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -656,7 +657,7 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(apiUrl(`/api/cursor-agent/stream/${rid}/stop`), { method: "POST" }).catch(() => {});
     }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -676,7 +677,7 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(apiUrl(`/api/cursor-agent/stream/${rid}/stop`), { method: "POST" }).catch(() => {});
     }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -711,7 +712,7 @@ export function CursorChatPanel({
     stopRequestedRef.current = true;
     const rid = runIdRef.current;
     if (rid) {
-      fetch(`/api/cursor-agent/stream/${rid}/stop`, { method: "POST" }).catch(() => {});
+      fetch(apiUrl(`/api/cursor-agent/stream/${rid}/stop`), { method: "POST" }).catch(() => {});
     }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();

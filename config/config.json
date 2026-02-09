@@ -3,9 +3,8 @@
     "port": 3990
   },
   "roots": [
-    "E:\\phpstudy_pro\\WWW"
-    // "/Users/chaonanqiu/Desktop/code",
-    // "/Applications/phpstudy/WWW"
+    "E:\\phpstudy_pro\\WWW",
+    "C:\\phpstudy_pro\\WWW"
   ],
   "dangerousCommandDenylist": [
     "sudo",

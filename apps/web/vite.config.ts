@@ -51,16 +51,6 @@ export default defineConfig({
     headers: {
       "Cache-Control": "no-store, no-cache, must-revalidate",
     },
-    proxy: {
-      "/api": {
-        target: "http://localhost:3990",
-        changeOrigin: true,
-      },
-      "/ws": {
-        target: "ws://localhost:3990",
-        ws: true,
-      },
-    },
     watch: {
       // Ignore files that might cause unnecessary reloads
       ignored: [

@@ -8,7 +8,11 @@
   ],
   "scripts": {
     "init-db": "pnpm --filter @vibego/server run init-db",
-    "dev": "concurrently -n protocol,server,web -c auto --kill-others-on-fail=false \"pnpm --filter @vibego/protocol dev\" \"pnpm --filter @vibego/server dev\" \"pnpm --filter @vibego/web dev\"",
+    "dev": "node scripts/start-server-first.js",
+    "dev:all": "concurrently -n protocol,server,web -c auto --kill-others-on-fail=false \"pnpm --filter @vibego/protocol dev\" \"pnpm --filter @vibego/server dev\" \"pnpm --filter @vibego/web dev\"",
+    "dev:fresh": "node scripts/free-ports.js && pnpm dev",
+    "dev:server": "pnpm --filter @vibego/server dev",
+    "dev:web": "concurrently -n protocol,web \"pnpm --filter @vibego/protocol dev\" \"pnpm --filter @vibego/web dev\"",
     "control": "pnpm --filter @vibego/control dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter @vibego/server start",

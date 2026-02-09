@@ -1,18 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
+import { apiUrl } from "../api";
 
 type ToolStatus = { ok: true; path: string | null; version: string | null; error: null } | { ok: false; path: string | null; version: null; error: string | null };
+
+type InstallHintsByPlatform = { darwin: string; win32: string; linux: string };
 
 type SetupCheck = {
   ok: boolean;
   platform?: string;
   roots?: string[];
   tools?: { agent: ToolStatus; codex: ToolStatus; cursor: ToolStatus; rg: ToolStatus };
-  installHints?: { agent: string; rg: string; codex: string };
+  installHints?: { agent: InstallHintsByPlatform; rg: InstallHintsByPlatform; codex: InstallHintsByPlatform };
 };
 
 const STEPS = [
   { id: 1, title: "选择根目录" },
-  { id: 2, title: "检测 Cursor / Codex" },
+  { id: 2, title: "安装 Cursor / Codex（手动）" },
   { id: 3, title: "初始化数据库" },
 ] as const;
 
@@ -23,7 +26,6 @@ export function SetupPage() {
   const [error, setError] = useState<string>("");
   const [rootsInput, setRootsInput] = useState("");
   const [addRootLoading, setAddRootLoading] = useState(false);
-  const [installTool, setInstallTool] = useState<"agent" | "rg" | "codex" | null>(null);
   const [installResult, setInstallResult] = useState<{ tool: string; ok: boolean; msg?: string } | null>(null);
   const [step2Skipped, setStep2Skipped] = useState(false);
   const [dbInitLoading, setDbInitLoading] = useState(false);
@@ -34,7 +36,7 @@ export function SetupPage() {
     setLoading(true);
     setError("");
     try {
-      const r = await fetch("/api/setup/check");
+      const r = await fetch(apiUrl("/api/setup/check"));
       const data = await r.json();
       if (data?.ok) {
         setSetupData(data);
@@ -72,7 +74,7 @@ export function SetupPage() {
         const path = lines[i];
         const setActive = i === lines.length - 1;
         try {
-          const r = await fetch("/api/setup/add-root", {
+          const r = await fetch(apiUrl("/api/setup/add-root"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ root: path, setActive }),
@@ -105,34 +107,11 @@ export function SetupPage() {
     }
   };
 
-  const handleInstallTool = async (tool: "agent" | "rg" | "codex") => {
-    setInstallTool(tool);
-    setInstallResult(null);
-    try {
-      const r = await fetch("/api/setup/install", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool }),
-      });
-      const data = await r.json();
-      if (data?.ok) {
-        setInstallResult({ tool, ok: true, msg: data?.after?.version ?? "安装完成" });
-        await fetchCheck();
-      } else {
-        setInstallResult({ tool, ok: false, msg: data?.error ?? data?.hint ?? "安装失败" });
-      }
-    } catch (e: any) {
-      setInstallResult({ tool, ok: false, msg: e?.message ?? "请求失败" });
-    } finally {
-      setInstallTool(null);
-    }
-  };
-
   const handleInitDb = async () => {
     setDbInitLoading(true);
     setInstallResult(null);
     try {
-      const r = await fetch("/api/setup/ensure-db");
+      const r = await fetch(apiUrl("/api/setup/ensure-db"));
       const data = await r.json();
       if (data?.ok) {
         setDbInitDone(true);
@@ -149,7 +128,7 @@ export function SetupPage() {
   const handleComplete = async () => {
     setCompleteLoading(true);
     try {
-      const r = await fetch("/api/setup/complete", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const r = await fetch(apiUrl("/api/setup/complete"), { method: "POST", headers: { "Content-Type": "application/json" } });
       const data = await r.json();
       if (data?.ok) {
         window.location.hash = "#/";
@@ -277,64 +256,82 @@ export function SetupPage() {
               </>
             )}
 
-            {/* 第二步：检测 Cursor / Codex */}
+            {/* 第二步：安装 Cursor / Codex（仅手动安装说明） */}
             {currentStep === 2 && (
               <>
-                <h2>第二步：检测 Cursor / Codex</h2>
-                <p>以下工具用于 Cursor Chat、Codex 终端等功能。可一键安装，也可跳过（跳过后相关功能无法正常使用）。</p>
+                <h2>第二步：安装 Cursor / Codex（手动安装）</h2>
+                <p>以下工具用于 Cursor Chat、Codex 终端等功能。请根据当前检测状态，在终端中按下方说明手动安装。未安装也可跳过，但相关功能将无法使用。</p>
                 <div className="setupToolGrid">
                   {tools?.agent !== undefined && (
                     <div className="setupToolCard">
-                      <div className="setupToolName">Cursor CLI（agent）</div>
-                      <div className="setupToolStatus">
+                      <div className="setupToolRow">
+                        <span className="setupToolName">Cursor CLI（agent）</span>
                         {tools.agent.ok ? (
-                          <><span className="setupStatusOk">✓ 已安装</span>{tools.agent.version ? ` ${tools.agent.version}` : null}</>
+                          <span className="setupToolStatus setupStatusOk">✓ 已安装{tools.agent.version ? ` ${tools.agent.version}` : null}</span>
                         ) : (
-                          <>
-                            <span className="setupStatusFail">✗ 未安装</span>
-                            <button type="button" className="setupInstallBtn" onClick={() => handleInstallTool("agent")} disabled={installTool !== null}>
-                              {installTool === "agent" ? "安装中…" : "一键安装"}
-                            </button>
-                            {hints?.agent && <code className="setupToolHint">{hints.agent}</code>}
-                          </>
+                          <span className="setupToolStatus setupStatusFail">✗ 未安装</span>
                         )}
                       </div>
+                      {!tools.agent.ok && hints?.agent && (
+                        <div className="setupToolStatusBody">
+                          <div className="setupManualBlock">
+                            <span className="setupManualLabel">安装方法</span>
+                            <ul className="setupPlatformHints">
+                              <li><span className="setupPlatformLabel">macOS</span><code className="setupToolHint">{hints.agent.darwin}</code></li>
+                              <li><span className="setupPlatformLabel">Windows</span><code className="setupToolHint">{hints.agent.win32}</code></li>
+                              <li><span className="setupPlatformLabel">Linux</span><code className="setupToolHint">{hints.agent.linux}</code></li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   {tools?.codex !== undefined && (
                     <div className="setupToolCard">
-                      <div className="setupToolName">Codex</div>
-                      <div className="setupToolStatus">
+                      <div className="setupToolRow">
+                        <span className="setupToolName">Codex</span>
                         {tools.codex.ok ? (
-                          <><span className="setupStatusOk">✓ 已安装</span>{tools.codex.version ? ` ${tools.codex.version}` : null}</>
+                          <span className="setupToolStatus setupStatusOk">✓ 已安装{tools.codex.version ? ` ${tools.codex.version}` : null}</span>
                         ) : (
-                          <>
-                            <span className="setupStatusFail">✗ 未安装</span>
-                            <button type="button" className="setupInstallBtn" onClick={() => handleInstallTool("codex")} disabled={installTool !== null}>
-                              {installTool === "codex" ? "安装中…" : "一键安装"}
-                            </button>
-                            {hints?.codex && <code className="setupToolHint">{hints.codex}</code>}
-                          </>
+                          <span className="setupToolStatus setupStatusFail">✗ 未安装</span>
                         )}
                       </div>
+                      {!tools.codex.ok && hints?.codex && (
+                        <div className="setupToolStatusBody">
+                          <div className="setupManualBlock">
+                            <span className="setupManualLabel">安装方法</span>
+                            <ul className="setupPlatformHints">
+                              <li><span className="setupPlatformLabel">macOS</span><code className="setupToolHint">{hints.codex.darwin}</code></li>
+                              <li><span className="setupPlatformLabel">Windows</span><code className="setupToolHint">{hints.codex.win32}</code></li>
+                              <li><span className="setupPlatformLabel">Linux</span><code className="setupToolHint">{hints.codex.linux}</code></li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   {tools?.rg !== undefined && (
                     <div className="setupToolCard">
-                      <div className="setupToolName">Ripgrep（rg）</div>
-                      <div className="setupToolStatus">
+                      <div className="setupToolRow">
+                        <span className="setupToolName">Ripgrep（rg）</span>
                         {tools.rg.ok ? (
-                          <><span className="setupStatusOk">✓ 已安装</span>{tools.rg.version ? ` ${tools.rg.version}` : null}</>
+                          <span className="setupToolStatus setupStatusOk">✓ 已安装{tools.rg.version ? ` ${tools.rg.version}` : null}</span>
                         ) : (
-                          <>
-                            <span className="setupStatusFail">✗ 未安装</span>
-                            <button type="button" className="setupInstallBtn" onClick={() => handleInstallTool("rg")} disabled={installTool !== null}>
-                              {installTool === "rg" ? "安装中…" : "一键安装"}
-                            </button>
-                            {hints?.rg && <code className="setupToolHint">{hints.rg}</code>}
-                          </>
+                          <span className="setupToolStatus setupStatusFail">✗ 未安装</span>
                         )}
                       </div>
+                      {!tools.rg.ok && hints?.rg && (
+                        <div className="setupToolStatusBody">
+                          <div className="setupManualBlock">
+                            <span className="setupManualLabel">安装方法</span>
+                            <ul className="setupPlatformHints">
+                              <li><span className="setupPlatformLabel">macOS</span><code className="setupToolHint">{hints.rg.darwin}</code></li>
+                              <li><span className="setupPlatformLabel">Windows</span><code className="setupToolHint">{hints.rg.win32}</code></li>
+                              <li><span className="setupPlatformLabel">Linux</span><code className="setupToolHint">{hints.rg.linux}</code></li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -344,11 +341,6 @@ export function SetupPage() {
                   </button>
                   <span className="setupSkipHint">跳过则无法正常使用 Cursor Chat、Codex 终端等功能。</span>
                 </div>
-                {installResult && installResult.tool !== "root" && installResult.tool !== "db" && (
-                  <p className={installResult.ok ? "setupStatus setupStatusOk" : "setupStatus setupStatusFail"}>
-                    {installResult.ok ? "✓ " : "✗ "}{installResult.msg}
-                  </p>
-                )}
               </>
             )}
 

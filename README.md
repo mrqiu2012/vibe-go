@@ -9,8 +9,11 @@ pnpm install
 pnpm dev
 ```
 
-- web dev：`http://localhost:5173`
-- server：`http://localhost:3005`
+- **前端**：http://localhost:3989/
+- **后端 API**：http://localhost:3990/api/*
+- **WebSocket**：ws://localhost:3990/ws/term
+
+`pnpm dev` 会先启动后端（等 3990 就绪）再启动前端，避免前端先请求时后端未就绪导致 500。若端口被占用，可执行 `pnpm dev:fresh`（会先释放 3989/3990 再启动）。分终端启动时：终端 1 运行 `pnpm dev:server`，终端 2 运行 `pnpm dev:web`。更多说明见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
 ## 配置
 

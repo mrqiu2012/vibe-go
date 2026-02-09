@@ -16,29 +16,24 @@ import { listDir, readTextFile, writeTextFile, createDir } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
 import { snapshotManager } from "./term/snapshotManager.js";
 import { executeCursorAgent, spawnCursorAgentStream, listCursorModels } from "./cursorAgent.js";
-import {
-  getDb,
-  getAllSessions,
-  getSession,
-  createSession,
-  updateSession,
-  deleteSession,
-  addMessage,
-  updateMessage,
-  getAllWorkspaces,
-  getActiveWorkspace,
-  createWorkspace,
-  setActiveWorkspace,
-  deleteWorkspace,
-  getWorkspaceByCwd,
-  getLastOpenedFile,
-  setLastOpenedFile,
-  getActiveRoot,
-  setActiveRoot,
-  type ChatSession,
-  type Message,
-  type Workspace,
-} from "./db.js";
+import type { ChatSession, Message, Workspace } from "./db.js";
+
+/** 延迟加载 db，避免 better-sqlite3 加载失败时整个进程在启动前崩溃，至少 /ping、/api/roots、/api/setup/check 可用 */
+type DbModule = typeof import("./db.js");
+let _dbModule: DbModule | null = null;
+let _dbLoadError: Error | null = null;
+async function getDbModule(): Promise<DbModule> {
+  if (_dbModule) return _dbModule;
+  if (_dbLoadError) throw _dbLoadError;
+  try {
+    _dbModule = await import("./db.js");
+    return _dbModule;
+  } catch (e) {
+    _dbLoadError = e instanceof Error ? e : new Error(String(e));
+    console.error("[server] db module load failed:", _dbLoadError.message);
+    throw _dbLoadError;
+  }
+}
 
 const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
 
@@ -86,23 +81,61 @@ function fileExists(p: string) {
   }
 }
 
-async function whichBin(binName: string): Promise<string | null> {
+async function whichBin(binName: string, envPATH?: string): Promise<string | null> {
   try {
+    const env = envPATH != null ? { ...process.env, PATH: envPATH } : process.env;
     const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const r = await execa(cmd, [binName], { timeout: 3000 });
-    const p = r.stdout.trim().split("\n")[0];
+    const r = await execa(cmd, [binName], { timeout: 3000, env });
+    const p = r.stdout.trim().split("\n")[0]?.trim();
     if (p && fileExists(p)) return p;
   } catch {}
   return null;
 }
 
+/** Windows 上 Cursor agent 常见安装目录，用于检测时扩展 PATH */
+function getAgentCandidatePathsWin(): string[] {
+  const dirs: string[] = [];
+  const user = process.env.USERPROFILE || process.env.HOME || "";
+  const local = process.env.LOCALAPPDATA || "";
+  if (user) {
+    dirs.push(path.join(user, ".cursor", "bin"));
+    dirs.push(path.join(user, "AppData", "Local", "cursor", "bin"));
+    dirs.push(path.join(user, "AppData", "Local", "Programs", "cursor", "bin"));
+  }
+  if (local) {
+    dirs.push(path.join(local, "cursor", "bin"));
+    dirs.push(path.join(local, "Programs", "cursor", "bin"));
+  }
+  return dirs.filter((d) => d.length > 0);
+}
+
+/** Windows 上 ripgrep (rg) 常见安装目录，winget/scoop 等安装后可能不在当前进程 PATH 中 */
+function getRgCandidatePathsWin(): string[] {
+  const dirs: string[] = [];
+  const pf = process.env["ProgramFiles"] || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA || "";
+  const user = process.env.USERPROFILE || process.env.HOME || "";
+  dirs.push(path.join(pf, "ripgrep"));
+  dirs.push(path.join(pf86, "ripgrep"));
+  if (local) {
+    dirs.push(path.join(local, "Programs", "ripgrep"));
+  }
+  if (user) {
+    dirs.push(path.join(user, "scoop", "apps", "ripgrep", "current"));
+    dirs.push(path.join(user, ".cargo", "bin"));
+  }
+  return dirs.filter((d) => d.length > 0);
+}
+
 async function checkAgentCli() {
   try {
+    const pathEnv =
+      process.platform === "win32"
+        ? [...getAgentCandidatePathsWin(), process.env.PATH || ""].join(path.delimiter)
+        : `${process.env.HOME || ""}/.local/bin:${process.env.PATH || ""}`;
     await execa("agent", ["--version"], {
-      env: {
-        ...process.env,
-        PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
-      },
+      env: { ...process.env, PATH: pathEnv },
       timeout: 5000,
     });
     return true;
@@ -112,15 +145,37 @@ async function checkAgentCli() {
 }
 
 async function checkCmdVersion(bin: string, args: string[] = ["--version"]) {
-  const p = await whichBin(bin);
+  let p: string | null = await whichBin(bin);
+  // Windows: 若 PATH 中未找到，尝试常见安装目录（用户安装后可能未重启服务，PATH 未更新）
+  if (!p && process.platform === "win32") {
+    const extraDirs = bin === "agent" ? getAgentCandidatePathsWin() : bin === "rg" ? getRgCandidatePathsWin() : [];
+    const exeName = process.platform === "win32" && (bin === "agent" || bin === "rg") ? `${bin}.exe` : bin;
+    if (extraDirs.length > 0) {
+      const basePath = process.env.PATH || "";
+      const extendedPath = [...extraDirs, basePath].join(path.delimiter);
+      p = await whichBin(bin, extendedPath);
+      if (!p) {
+        for (const dir of extraDirs) {
+          const full = path.join(dir, exeName);
+          if (fileExists(full)) {
+            p = full;
+            break;
+          }
+        }
+      }
+    }
+  }
   if (!p) return { ok: false as const, path: null as string | null, version: null as string | null, error: "not found" };
   try {
+    const pathEnv =
+      process.platform === "win32" && bin === "agent"
+        ? [...getAgentCandidatePathsWin(), process.env.PATH || ""].join(path.delimiter)
+        : process.platform === "win32" && bin === "rg"
+          ? [...getRgCandidatePathsWin(), process.env.PATH || ""].join(path.delimiter)
+          : `${process.env.HOME || ""}/.local/bin:${process.env.PATH || ""}`;
     const r = await execa(p, args, {
       timeout: 5000,
-      env: {
-        ...process.env,
-        PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
-      },
+      env: { ...process.env, PATH: pathEnv },
     });
     const v = (r.stdout || r.stderr || "").trim();
     return { ok: true as const, path: p, version: v || null, error: null as string | null };
@@ -132,20 +187,29 @@ async function checkCmdVersion(bin: string, args: string[] = ["--version"]) {
 type SetupInstallTool = "agent" | "rg" | "codex";
 
 function getInstallHint(tool: SetupInstallTool) {
-  // Keep these as display hints for the UI. Execution uses a separate mapping below.
+  const hints = getInstallHintsByPlatform(tool);
+  return process.platform === "win32" ? hints.win32 : process.platform === "darwin" ? hints.darwin : hints.linux;
+}
+
+/** 按平台返回安装说明，供前端区分 macOS / Windows / Linux 展示 */
+function getInstallHintsByPlatform(tool: SetupInstallTool): { darwin: string; win32: string; linux: string } {
   if (tool === "agent") {
-    return process.platform === "win32"
-      ? "irm 'https://cursor.com/install?win32=true' | iex"
-      : "curl https://cursor.com/install -fsS | bash";
+    return {
+      darwin: "curl https://cursor.com/install -fsS | bash",
+      win32: "irm 'https://cursor.com/install?win32=true' | iex",
+      linux: "curl https://cursor.com/install -fsS | bash",
+    };
   }
   if (tool === "rg") {
-    if (process.platform === "darwin") return "brew install ripgrep";
-    if (process.platform === "win32") return "winget install --id BurntSushi.ripgrep.MSVC -e --accept-source-agreements --accept-package-agreements";
-    // linux is distro-dependent; leave as a hint only
-    return "Install ripgrep (rg) via your package manager, e.g. apt/dnf/pacman";
+    return {
+      darwin: "brew install ripgrep",
+      win32: "winget install --id BurntSushi.ripgrep.MSVC -e --accept-source-agreements --accept-package-agreements",
+      linux: "Install ripgrep (rg) via your package manager, e.g. apt/dnf/pacman",
+    };
   }
-  // codex
-  return "npm i -g @openai/codex";
+  // codex (same on all platforms)
+  const codexCmd = "npm i -g @openai/codex";
+  return { darwin: codexCmd, win32: codexCmd, linux: codexCmd };
 }
 
 async function canAutoInstall(tool: SetupInstallTool): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -255,14 +319,33 @@ async function chooseDirectoryNative(promptText: string) {
 }
 
 async function main() {
+  console.log("[server] main() started");
   const repoRoot = getRepoRoot();
   const configPath = process.env.CONFIG_PATH ?? path.join(repoRoot, "config", "config.json");
   const setupDonePath = path.join(path.dirname(configPath), ".setup-done");
-  const cfg = await loadConfig(configPath);
-  let roots = await normalizeRoots(cfg.roots);
+  let cfg: Awaited<ReturnType<typeof loadConfig>>;
+  try {
+    cfg = await loadConfig(configPath);
+  } catch (e) {
+    console.error("[server] loadConfig failed:", (e as Error)?.message);
+    throw e;
+  }
+  let roots: string[];
+  try {
+    roots = await normalizeRoots(cfg.roots);
+  } catch (e) {
+    console.warn("[config] No valid roots from config, using process.cwd() as fallback:", (e as Error)?.message);
+    const fallback = process.cwd();
+    try {
+      const st = await fs.promises.stat(fallback);
+      roots = st.isDirectory() ? [fallback] : [path.join(fallback, "..")];
+    } catch {
+      roots = [path.resolve(fallback, "..")];
+    }
+  }
 
-  // Check for Cursor Agent CLI availability
-  await checkAgentCli();
+  // 不阻塞启动：在后台检测 Cursor Agent CLI，避免 checkAgentCli 卡住导致服务迟迟无法监听端口
+  void checkAgentCli();
 
   const port = Number(cfg.server?.port ?? process.env.PORT ?? 3990);
   const timeoutSec = cfg.limits?.timeoutSec ?? 900;
@@ -290,6 +373,7 @@ async function main() {
     cors({
       origin: (origin, cb) => cb(null, allowedOrigin(origin ?? undefined)),
       credentials: false,
+      exposedHeaders: ["X-Run-Id"],
     }),
   );
   app.use(express.json({ limit: "10mb" }));
@@ -311,60 +395,82 @@ async function main() {
     } catch {}
   };
 
+  // 无依赖，用于确认后端已启动（代理/前端可先请求 /ping）
+  app.get("/ping", (_req, res) => {
+    res.status(200).send("ok");
+  });
+
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, roots, uptimeSec: Math.floor(process.uptime()) });
   });
 
   app.get("/api/roots", (_req, res) => {
     try {
-      res.json({ ok: true, roots });
+      res.json({ ok: true, roots: Array.isArray(roots) ? roots : [] });
     } catch (e: any) {
       console.error("[api/roots]", e);
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
-  app.get("/api/setup/check", async (req, res) => {
+  app.get("/api/setup/check", async (_req, res) => {
     try {
+      const checkOne = async (cmd: string, args: string[] = ["--version"]) => {
+        try {
+          return await checkCmdVersion(cmd, args);
+        } catch (e) {
+          return { ok: false as const, path: null as string | null, version: null as string | null, error: (e as Error)?.message ?? String(e) };
+        }
+      };
+      // 避免 checkCmdVersion 内部未捕获的异常导致整次请求 500
       const tools = {
-        codex: await checkCmdVersion("codex", ["--version"]),
-        cursor: await checkCmdVersion("cursor", ["--version"]),
-        agent: await checkCmdVersion("agent", ["--version"]),
-        rg: await checkCmdVersion("rg", ["--version"]),
+        codex: await checkOne("codex"),
+        cursor: await checkOne("cursor"),
+        agent: await checkOne("agent"),
+        rg: await checkOne("rg"),
       };
 
-      // Cursor desktop app best-effort checks (macOS)
-      const cursorAppPaths =
-        process.platform === "darwin"
-          ? ["/Applications/Cursor.app", path.join(os.homedir(), "Applications", "Cursor.app")].filter((p) => fs.existsSync(p))
-          : [];
+      let cursorAppPaths: string[] = [];
+      try {
+        if (process.platform === "darwin") {
+          const home = os.homedir();
+          cursorAppPaths = ["/Applications/Cursor.app", path.join(home, "Applications", "Cursor.app")].filter((p) => fs.existsSync(p));
+        }
+      } catch {}
+
+      let setupDone = false;
+      try {
+        setupDone = fs.existsSync(setupDonePath);
+      } catch {}
 
       res.json({
         ok: true,
         platform: process.platform,
         configPath,
         roots,
-        setupDone: fs.existsSync(setupDonePath),
+        setupDone,
         tools,
         cursorAppPaths,
         installHints: {
-          agent: getInstallHint("agent"),
-          rg: getInstallHint("rg"),
-          codex: getInstallHint("codex"),
+          agent: getInstallHintsByPlatform("agent"),
+          rg: getInstallHintsByPlatform("rg"),
+          codex: getInstallHintsByPlatform("codex"),
         },
       });
     } catch (e: any) {
+      console.error("[api/setup/check]", e);
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // 确保数据库已创建并应用 schema（安装第三步）
-  app.get("/api/setup/ensure-db", (_req, res) => {
+  app.get("/api/setup/ensure-db", async (_req, res) => {
     try {
-      getDb();
+      const db = await getDbModule();
+      db.getDb();
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
@@ -478,33 +584,41 @@ async function main() {
 
       if (setActive) {
         try {
-          setActiveRoot(norm);
+          const db = await getDbModule();
+          db.setActiveRoot(norm);
         } catch {}
       }
 
-      res.json({ ok: true, roots, activeRoot: setActive ? norm : getActiveRoot(), configPath });
+      let activeRoot: string = norm;
+      try {
+        const db = await getDbModule();
+        activeRoot = setActive ? norm : (db.getActiveRoot() ?? norm);
+      } catch {}
+      res.json({ ok: true, roots, activeRoot, configPath });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
-  app.get("/api/app/active-root", (_req, res) => {
+  app.get("/api/app/active-root", async (_req, res) => {
     try {
-      const root = getActiveRoot();
+      const db = await getDbModule();
+      const root = db.getActiveRoot();
       res.json({ ok: true, root });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
-  app.post("/api/app/active-root", (req, res) => {
+  app.post("/api/app/active-root", async (req, res) => {
     try {
       const root = String((req.body as any)?.root ?? "");
       if (!root) return res.status(400).json({ ok: false, error: "Missing root" });
-      setActiveRoot(root);
+      const db = await getDbModule();
+      db.setActiveRoot(root);
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
@@ -981,35 +1095,38 @@ async function main() {
   // ==================== Chat Session APIs ====================
 
   // Get all sessions for a given cwd
-  app.get("/api/chat/sessions", (req, res) => {
+  app.get("/api/chat/sessions", async (req, res) => {
     try {
+      const db = await getDbModule();
       const cwd = String(req.query.cwd ?? "");
       if (!cwd) {
         return res.status(400).json({ ok: false, error: "Missing cwd parameter" });
       }
-      const sessions = getAllSessions(cwd);
+      const sessions = db.getAllSessions(cwd);
       res.json({ ok: true, sessions });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Get a single session by ID
-  app.get("/api/chat/sessions/:id", (req, res) => {
+  app.get("/api/chat/sessions/:id", async (req, res) => {
     try {
-      const session = getSession(req.params.id);
+      const db = await getDbModule();
+      const session = db.getSession(req.params.id);
       if (!session) {
         return res.status(404).json({ ok: false, error: "Session not found" });
       }
       res.json({ ok: true, session });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Create a new session
-  app.post("/api/chat/sessions", (req, res) => {
+  app.post("/api/chat/sessions", async (req, res) => {
     try {
+      const db = await getDbModule();
       const { id, cwd, title, messages, createdAt, updatedAt } = req.body;
       if (!id || !cwd) {
         return res.status(400).json({ ok: false, error: "Missing required fields" });
@@ -1022,22 +1139,23 @@ async function main() {
         createdAt: createdAt || Date.now(),
         updatedAt: updatedAt || Date.now(),
       };
-      const created = createSession(session);
+      const created = db.createSession(session);
       res.json({ ok: true, session: created });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Update a session
-  app.put("/api/chat/sessions/:id", (req, res) => {
+  app.put("/api/chat/sessions/:id", async (req, res) => {
     try {
-      const existing = getSession(req.params.id);
+      const db = await getDbModule();
+      const existing = db.getSession(req.params.id);
       if (!existing) {
         return res.status(404).json({ ok: false, error: "Session not found" });
       }
       const { title, messages, updatedAt } = req.body;
-      const updated = updateSession({
+      const updated = db.updateSession({
         ...existing,
         title: title ?? existing.title,
         messages: messages ?? existing.messages,
@@ -1045,27 +1163,29 @@ async function main() {
       });
       res.json({ ok: true, session: updated });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Delete a session
-  app.delete("/api/chat/sessions/:id", (req, res) => {
+  app.delete("/api/chat/sessions/:id", async (req, res) => {
     try {
-      const deleted = deleteSession(req.params.id);
+      const db = await getDbModule();
+      const deleted = db.deleteSession(req.params.id);
       if (!deleted) {
         return res.status(404).json({ ok: false, error: "Session not found" });
       }
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Add a message to a session
-  app.post("/api/chat/sessions/:id/messages", (req, res) => {
+  app.post("/api/chat/sessions/:id/messages", async (req, res) => {
     try {
-      const session = getSession(req.params.id);
+      const db = await getDbModule();
+      const session = db.getSession(req.params.id);
       if (!session) {
         return res.status(404).json({ ok: false, error: "Session not found" });
       }
@@ -1079,24 +1199,25 @@ async function main() {
         content,
         timestamp: timestamp || Date.now(),
       };
-      addMessage(req.params.id, message);
+      db.addMessage(req.params.id, message);
       res.json({ ok: true, message });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Update a message content
-  app.patch("/api/chat/messages/:id", (req, res) => {
+  app.patch("/api/chat/messages/:id", async (req, res) => {
     try {
+      const db = await getDbModule();
       const { content } = req.body;
       if (content === undefined) {
         return res.status(400).json({ ok: false, error: "Missing content" });
       }
-      updateMessage(req.params.id, content);
+      db.updateMessage(req.params.id, content);
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
@@ -1105,36 +1226,36 @@ async function main() {
   // ==================== Workspace APIs ====================
 
   // Get all workspaces
-  app.get("/api/workspaces", (_req, res) => {
+  app.get("/api/workspaces", async (_req, res) => {
     try {
-      const workspaces = getAllWorkspaces();
-      const active = getActiveWorkspace();
+      const db = await getDbModule();
+      const workspaces = db.getAllWorkspaces();
+      const active = db.getActiveWorkspace();
       res.json({ ok: true, workspaces, activeId: active?.id ?? null });
     } catch (e: any) {
       console.error("[api/workspaces]", e);
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Create a new workspace
-  app.post("/api/workspaces", (req, res) => {
+  app.post("/api/workspaces", async (req, res) => {
     try {
+      const db = await getDbModule();
       const { id, cwd, name, isActive } = req.body;
       if (!id || !cwd || !name) {
         return res.status(400).json({ ok: false, error: "Missing required fields" });
       }
       
-      // Check if workspace with same cwd already exists
-      const existing = getWorkspaceByCwd(cwd);
+      const existing = db.getWorkspaceByCwd(cwd);
       if (existing) {
-        // If already exists, just set it as active if requested
         if (isActive) {
-          setActiveWorkspace(existing.id);
+          db.setActiveWorkspace(existing.id);
         }
         return res.json({ ok: true, workspace: { ...existing, isActive: isActive ?? existing.isActive } });
       }
       
-      const workspace = createWorkspace({
+      const workspace = db.createWorkspace({
         id,
         cwd,
         name,
@@ -1143,35 +1264,37 @@ async function main() {
       });
       
       if (isActive) {
-        setActiveWorkspace(workspace.id);
+        db.setActiveWorkspace(workspace.id);
       }
       
       res.json({ ok: true, workspace });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Set active workspace
-  app.put("/api/workspaces/:id/active", (req, res) => {
+  app.put("/api/workspaces/:id/active", async (req, res) => {
     try {
-      setActiveWorkspace(req.params.id);
+      const db = await getDbModule();
+      db.setActiveWorkspace(req.params.id);
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
   // Delete a workspace
-  app.delete("/api/workspaces/:id", (req, res) => {
+  app.delete("/api/workspaces/:id", async (req, res) => {
     try {
-      const deleted = deleteWorkspace(req.params.id);
+      const db = await getDbModule();
+      const deleted = db.deleteWorkspace(req.params.id);
       if (!deleted) {
         return res.status(404).json({ ok: false, error: "Workspace not found" });
       }
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
@@ -1179,30 +1302,32 @@ async function main() {
 
   // ==================== Editor state APIs (last opened file per root) ====================
 
-  app.get("/api/editor/last", (req, res) => {
+  app.get("/api/editor/last", async (req, res) => {
     try {
+      const db = await getDbModule();
       const root = String(req.query.root ?? "");
       if (!root) {
         return res.status(400).json({ ok: false, error: "Missing root parameter" });
       }
-      const filePath = getLastOpenedFile(root);
+      const filePath = db.getLastOpenedFile(root);
       res.json({ ok: true, filePath });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
-  app.post("/api/editor/last", (req, res) => {
+  app.post("/api/editor/last", async (req, res) => {
     try {
+      const db = await getDbModule();
       const { root, filePath } = req.body;
       if (!root || !filePath) {
         return res.status(400).json({ ok: false, error: "Missing root or filePath" });
       }
       validatePathInRoots(filePath, roots);
-      setLastOpenedFile(root, filePath);
+      db.setLastOpenedFile(root, filePath);
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      res.status(503).json({ ok: false, error: e?.message ?? String(e) });
     }
   });
 
@@ -1225,6 +1350,18 @@ async function main() {
     validateCwd: (cwd) => validatePathInRoots(cwd, roots),
   });
 
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`\n❌ 端口 ${port} 已被占用，后端启动失败。`);
+      console.error(`   请运行: pnpm dev:fresh  （会先释放 3989/3990 再启动）`);
+      console.error(`   或手动: netstat -ano | findstr :${port}  然后 taskkill /PID <PID> /F`);
+    } else {
+      console.error("Server error:", err);
+    }
+    process.exit(1);
+  });
+
+  console.log("[server] binding to port", port);
   server.listen(port, "0.0.0.0", () => {
     const networkInterfaces = os.networkInterfaces();
     const localIPs: string[] = [];

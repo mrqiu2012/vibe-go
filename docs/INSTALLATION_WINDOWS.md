@@ -156,39 +156,70 @@ rg --version
 
 应该显示版本号，例如：`ripgrep 15.1.0`
 
-#### 5.2.1 已安装但仍提示找不到 rg
+#### 5.2.1 已安装但仍提示找不到 rg（更新环境变量 PATH）
 
-winget 可能把 `rg.exe` 安装到用户本地 packages，但不一定自动加入 PATH。  
-如果 `rg --version` 失败，可以按下面步骤把 `rg.exe` 放到用户级 `bin` 并加入 PATH。
+winget 会把 ripgrep 装到用户目录下的嵌套子目录，但 PATH 里可能只加了父目录，导致系统找不到 `rg.exe`。  
+若已用 winget 安装且 `winget install` 提示“找到已安装的现有包”，但运行 `agent` 仍报 “Could not find ripgrep (rg) binary”，说明需要把**包含 `rg.exe` 的子目录**加入用户 PATH。
+
+**方法一：直接把 ripgrep 目录加入用户 PATH（推荐）**
+
+在 PowerShell 中执行（请把下面的路径换成你机器上实际找到的 `ripgrep-*` 目录）：
+
+```powershell
+# 1) 查找 rg.exe 所在目录（通常为 WinGet Packages 下的 ripgrep-* 子目录）
+$rgExe = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "rg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+$rgDir = $rgExe.DirectoryName
+Write-Host "找到 ripgrep 目录: $rgDir"
+
+# 2) 将该目录加入用户环境变量 Path（永久生效）
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -notlike "*$rgDir*") {
+  [Environment]::SetEnvironmentVariable("Path", $currentPath + ";" + $rgDir, "User")
+  Write-Host "已添加 ripgrep 目录到用户 PATH。请关闭并重新打开终端后执行: rg --version"
+} else {
+  Write-Host "PATH 中已包含该目录。若仍找不到 rg，请重新打开终端。"
+}
+```
+
+然后**关闭当前所有 CMD/PowerShell 窗口，重新打开一个新终端**，再执行：
+
+```powershell
+rg --version
+agent
+```
+
+**方法二：拷贝 rg.exe 到用户 bin 并加入 PATH**
+
+若不想改 PATH 指向 WinGet 目录，可把 `rg.exe` 拷到固定目录再加 PATH：
 
 ```powershell
 # 1) 找到 winget 安装目录里的 rg.exe
-$rg = Get-ChildItem -Path "$env:LOCALAPPDATA\\Microsoft\\WinGet\\Packages" -Filter rg.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+$rg = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter rg.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 $rg.FullName
 
 # 2) 拷贝到用户 bin 目录
-$bin = "$env:USERPROFILE\\bin"
+$bin = "$env:USERPROFILE\bin"
 if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
 Copy-Item -Force $rg.FullName (Join-Path $bin "rg.exe")
 
-# 3) 写入用户 PATH（新终端生效）
-$userPath = [Environment]::GetEnvironmentVariable("Path","User")
+# 3) 将用户 bin 加入 PATH（永久生效）
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not $userPath) { $newPath = $bin }
 elseif ($userPath.Split(";") -notcontains $bin) { $newPath = $userPath + ";" + $bin }
 else { $newPath = $userPath }
-if ($newPath -ne $userPath) { setx PATH $newPath | Out-Null }
+if ($newPath -ne $userPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
 
 # 4) 重新打开终端后验证
-where.exe rg
-rg --version
+# where.exe rg
+# rg --version
 ```
 
-#### 5.3 刷新环境变量
+#### 5.3 刷新环境变量（仅当前会话）
 
-如果新打开的终端找不到 `rg`，刷新 PATH：
+若已修改用户 PATH 但当前终端仍找不到 `rg`，可在当前 PowerShell 中临时刷新 PATH 再验证（新开的终端会自动读取新 PATH，无需此步）：
 
 ```powershell
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 rg --version
 ```
 
@@ -299,13 +330,12 @@ codex --version
 
 ### 问题 3: Could not find ripgrep (rg) binary
 
-**症状：** Cursor CLI 提示找不到 ripgrep
+**症状：** Cursor CLI 提示 “Could not find ripgrep (rg) binary. Please install ripgrep.”
 
 **解决方案：**
-1. 确认 ripgrep 已安装：`rg --version`
-2. 检查路径：`where.exe rg`
-3. 代码会自动查找并添加到 PATH
-4. 重启服务器以应用代码更改
+1. 确认 ripgrep 已安装：`winget list BurntSushi.ripgrep.MSVC` 或执行 `winget install --id BurntSushi.ripgrep.MSVC -e` 安装。
+2. 若已安装但命令行仍找不到 `rg`，多半是 PATH 未包含 ripgrep 的**子目录**（winget 安装到嵌套路径）。请按上文 **[5.2.1 已安装但仍提示找不到 rg（更新环境变量 PATH）](#521-已安装但仍提示找不到-rg更新环境变量-path)** 将包含 `rg.exe` 的目录加入用户 PATH。
+3. 修改 PATH 后**关闭并重新打开终端**，再执行 `rg --version` 和 `agent`。
 
 ### 问题 4: Cannot find "codex"
 

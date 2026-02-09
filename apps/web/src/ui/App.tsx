@@ -24,6 +24,7 @@ import {
   apiSetLastOpenedFile,
   apiGetActiveRoot,
   apiSetActiveRoot,
+  apiUrl,
   type FsEntry,
   type Workspace,
 } from "../api";
@@ -1727,13 +1728,13 @@ export function App() {
 
         if (isPtySession) {
           try {
-            const snap = await fetch(`/api/term/snapshot/${resp.sessionId}?tailBytes=20000`);
+            const snap = await fetch(apiUrl(`/api/term/snapshot/${resp.sessionId}?tailBytes=20000`));
             if (snap.ok) {
               const payload = await snap.json();
               if (payload?.data && term.buffer.active.length === 0) {
                 term.write(payload.data);
               } else if (!payload?.data) {
-                const replay = await fetch(`/api/term/replay/${resp.sessionId}?tailBytes=20000`);
+                const replay = await fetch(apiUrl(`/api/term/replay/${resp.sessionId}?tailBytes=20000`));
                 if (replay.ok) {
                   const text = await replay.text();
                   if (text && term.buffer.active.length === 0) {
@@ -1742,7 +1743,7 @@ export function App() {
                 }
               }
             } else {
-              const replay = await fetch(`/api/term/replay/${resp.sessionId}?tailBytes=20000`);
+              const replay = await fetch(apiUrl(`/api/term/replay/${resp.sessionId}?tailBytes=20000`));
               if (replay.ok) {
                 const text = await replay.text();
                 if (text && term.buffer.active.length === 0) {

@@ -2151,8 +2151,8 @@ input {
 }
 
 .setupToolGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   margin-top: 12px;
 }
@@ -2164,20 +2164,29 @@ input {
   border: 1px solid var(--border);
 }
 
+.setupToolRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
 .setupToolName {
   font-weight: 600;
   font-size: 13px;
-  margin-bottom: 6px;
   color: var(--text);
 }
 
 .setupToolStatus {
   font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  flex-shrink: 0;
+}
+
+.setupToolStatusBody {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .setupInstallBtn {
@@ -2208,6 +2217,56 @@ input {
   word-break: break-all;
   background: transparent;
   padding: 0;
+}
+
+.setupManualBlock {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.setupManualLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.setupPlatformHints {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.setupPlatformHints > li {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setupPlatformHints .setupPlatformLabel {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 2px;
+}
+
+.setupPlatformHints .setupToolHint {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  word-break: break-all;
+  display: block;
 }
 
 .setupToggleBtn {

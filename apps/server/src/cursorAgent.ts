@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { execa } from "execa";
 
@@ -70,19 +70,81 @@ function makeCleanEnv() {
   return baseEnv;
 }
 
+/** Windows 上 ripgrep (rg) 常见安装目录，agent 子进程需在 PATH 中才能找到 rg */
+function getRgCandidatePathsWin(): string[] {
+  const dirs: string[] = [];
+  const pf = process.env["ProgramFiles"] || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA || "";
+  const user = process.env.USERPROFILE || process.env.HOME || "";
+  dirs.push(path.join(pf, "ripgrep"));
+  dirs.push(path.join(pf86, "ripgrep"));
+  if (local) dirs.push(path.join(local, "Programs", "ripgrep"));
+  if (user) {
+    dirs.push(path.join(user, "scoop", "apps", "ripgrep", "current"));
+    dirs.push(path.join(user, ".cargo", "bin"));
+  }
+  return dirs.filter((d) => d.length > 0);
+}
+
+/**
+ * Windows: 从注册表读取与 CMD 一致的 PATH（用户 + 系统），
+ * 这样 spawn 出的 agent 能找到 rg/agent，与在 CMD 里直接运行效果一致。
+ */
+function getWindowsPathFromRegistry(): string {
+  const pathSep = path.delimiter;
+  const parts: string[] = [];
+  try {
+    const userPath = execSync('reg query "HKCU\\Environment" /v Path 2>nul', { encoding: "utf8", windowsHide: true });
+    const sysPath = execSync('reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v Path 2>nul', {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const parseRegPath = (out: string): string[] => {
+      const line = out.split(/\r?\n/).find((l) => l.includes("Path") && l.includes("REG_"));
+      if (!line) return [];
+      const regIdx = line.indexOf("REG_");
+      const value = regIdx >= 0 ? line.slice(regIdx).replace(/^REG_\w+\s+/, "").trim() : "";
+      return value ? value.split(pathSep).map((p) => p.trim()).filter(Boolean) : [];
+    };
+    parts.push(...parseRegPath(userPath), ...parseRegPath(sysPath));
+  } catch {
+    // 读注册表失败时退回当前进程 PATH
+    const current = process.env.PATH || "";
+    if (current) parts.push(...current.split(pathSep).filter(Boolean));
+  }
+  const extra = getRgCandidatePathsWin();
+  const seen = new Set<string>(extra.map((p) => path.resolve(p).toLowerCase()));
+  for (const p of parts) {
+    const r = path.resolve(p).toLowerCase();
+    if (!seen.has(r)) {
+      seen.add(r);
+      extra.push(p);
+    }
+  }
+  return extra.join(pathSep);
+}
+
+function getSpawnPath(): string {
+  if (process.platform === "win32") {
+    return getWindowsPathFromRegistry();
+  }
+  const pathSep = ":";
+  const extra = [path.join(process.env.HOME ?? "", ".local", "bin")];
+  const base = process.env.PATH || "";
+  return [...extra.filter(Boolean), base].join(pathSep);
+}
+
 export type CursorModelOption = { id: string; label: string };
 
 export async function listCursorModels(): Promise<CursorModelOption[]> {
   const agentBin = await resolveAgentBin();
   const baseEnv = makeCleanEnv();
-  const spawnPath = [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""]
-    .filter(Boolean)
-    .join(path.delimiter);
   try {
     const result = await execa(agentBin, ["--list-models"], {
       env: {
         ...baseEnv,
-        PATH: spawnPath,
+        PATH: getSpawnPath(),
         HOME: process.env.HOME,
         USER: process.env.USER,
         SHELL: process.env.SHELL,
@@ -122,9 +184,6 @@ export async function executeCursorAgent(
   if (mode === "ask") args.push("--mode=ask");
 
   const baseEnv = makeCleanEnv();
-  const spawnPath = [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""]
-    .filter(Boolean)
-    .join(path.delimiter);
 
   try {
     const result = await execa(agentBin, args, {
@@ -132,7 +191,7 @@ export async function executeCursorAgent(
       timeout: 300000, // 5 minutes - cursor agent tools can take a while
       env: {
         ...baseEnv,
-        PATH: spawnPath,
+        PATH: getSpawnPath(),
         HOME: process.env.HOME,
         USER: process.env.USER,
         SHELL: process.env.SHELL,
@@ -213,24 +272,36 @@ export async function spawnCursorAgentStream(opts: SpawnCursorAgentStreamOpts): 
   if (opts.mode === "ask") args.push("--mode=ask");
 
   const baseEnv = makeCleanEnv();
-  const spawnPath = [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""]
-    .filter(Boolean)
-    .join(path.delimiter);
+
+  // Normalize cwd to absolute path; Node spawn on Windows can throw EINVAL for invalid cwd
+  const cwd = path.resolve(opts.cwd || ".");
+  if (!fs.existsSync(cwd)) {
+    throw new Error(`Working directory does not exist: ${cwd}`);
+  }
+  const cwdStat = fs.statSync(cwd);
+  if (!cwdStat.isDirectory()) {
+    throw new Error(`Not a directory: ${cwd}`);
+  }
+
+  // Windows: Node 20+ disallows direct spawn of .cmd/.bat without shell (EINVAL)
+  const needsShell =
+    process.platform === "win32" &&
+    /\.(cmd|bat|ps1)$/i.test(agentBin);
 
   const child = spawn(agentBin, args, {
-    cwd: opts.cwd,
+    cwd,
     env: {
       ...baseEnv,
-      PATH: spawnPath,
+      PATH: getSpawnPath(),
       HOME: process.env.HOME,
       USER: process.env.USER,
       SHELL: process.env.SHELL,
       LANG: process.env.LANG ?? "en_US.UTF-8",
     },
     stdio: ["ignore", "pipe", "pipe"],
-    // On Windows, detached breaks stdout/stderr pipes for .cmd targets.
-    detached: process.platform !== "win32",
+    detached: process.platform !== "win32" && !needsShell,
     windowsHide: true,
+    shell: needsShell,
   });
 
   const stop = () => killProcessTree(child);
