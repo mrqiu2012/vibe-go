@@ -1527,6 +1527,10 @@ export function App() {
           term.write(`\r\n[restricted PTY 已退出 ${m.code ?? "?"}]\r\n`);
         } else {
           // restricted mode: command finished, but session stays open for more commands
+          // Ensure cursor is visible in non-PTY restricted mode
+          try {
+            term.write("\x1b[?25h");
+          } catch {}
           term.write(`$ `);
         }
       }
@@ -1709,6 +1713,16 @@ export function App() {
         termSessionIsPtyRef.current = isPtySession;
         lastOpenKeyRef.current = openKey;
         cursorPromptNudgedRef.current = false;
+        if (termMode === "restricted") {
+          // Force cursor visible for restricted mode (especially non-PTY fallback)
+          try {
+            term.options.cursorStyle = "block";
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (term.options as any).cursorInactiveStyle = "block";
+            term.options.cursorBlink = true;
+            term.write("\x1b[?25h");
+          } catch {}
+        }
         // Flush any term.data that arrived before term.open.resp (e.g. Codex welcome / PTY hint)
         const buf = termPendingDataBufferRef.current.get(resp.sessionId);
         if (buf?.length) {
@@ -1772,9 +1786,7 @@ export function App() {
   const ExplorerPanel = (
     <div className={"panel" + (isMobile && mobileTab !== "explorer" ? " hidden" : "")} style={{ flex: isMobile ? 1 : undefined }}>
       <div className="panelHeader" style={{ flexDirection: "column", alignItems: "stretch" }}>
-        <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-          <h2>文件</h2>
-        </div>
+        
         <div className="row" style={{ gap: 6, marginTop: 6 }}>
           <button
             type="button"
@@ -1847,9 +1859,9 @@ export function App() {
               )}
               {!panelExplorerCollapsed && (
                 <div className="row" style={{ marginLeft: "auto", gap: 8, alignItems: "center" }}>
-                <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)" }}>
+                {/* <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)" }}>
                   安装指南
-                </a>
+                </a> */}
                 <select
                     className="select"
                     value={activeRoot}
@@ -2214,7 +2226,7 @@ export function App() {
                   </button>
                 </div>
                   <div className="row" style={{ marginLeft: "auto" }}>
-                    {(termMode === "codex" || termMode === "restricted") && (
+                    {termMode !== "cursor" && (
                       <button
                         type="button"
                         className="termPasteBtn"
@@ -2231,19 +2243,6 @@ export function App() {
                         粘贴
                       </button>
                     )}
-                    {isMobile && termMode !== "cursor" ? (
-                      <button
-                        type="button"
-                        className="termPasteBtn"
-                        title={mobileKeysVisible ? "隐藏方向键" : "显示方向键"}
-                        onClick={() => {
-                          mobileKeysTouchedRef.current = true;
-                          setMobileKeysVisible((v) => !v);
-                        }}
-                      >
-                        {mobileKeysVisible ? "键盘" : "方向键"}
-                      </button>
-                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -2392,9 +2391,7 @@ export function App() {
                 </option>
               ))}
             </select>
-            <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)", flexShrink: 0 }}>
-              安装
-            </a>
+           
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
                 文件
@@ -2578,7 +2575,7 @@ export function App() {
                     Restricted
                   </button>
                 </div>
-                {(termMode === "codex" || termMode === "restricted") && (
+                {termMode !== "cursor" && (
                   <button
                     type="button"
                     className="termPasteBtn"
@@ -2595,19 +2592,6 @@ export function App() {
                     粘贴
                   </button>
                 )}
-                {isMobile && termMode !== "cursor" ? (
-                  <button
-                    type="button"
-                    className="termPasteBtn"
-                    title={mobileKeysVisible ? "隐藏方向键" : "显示方向键"}
-                    onClick={() => {
-                      mobileKeysTouchedRef.current = true;
-                      setMobileKeysVisible((v) => !v);
-                    }}
-                  >
-                    {mobileKeysVisible ? "键盘" : "方向键"}
-                  </button>
-                ) : null}
               </div>
               <div className="termPanelHeaderCwd" title={terminalCwd}>
                 {terminalCwd ? `工作目录: ${terminalCwd}` : ""}

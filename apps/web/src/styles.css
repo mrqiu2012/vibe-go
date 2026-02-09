@@ -423,6 +423,7 @@ input {
   border-color: #cbd5e1;
 }
 
+
 .termPanelHeaderCwd {
   color: var(--muted);
   font-size: 11px;
@@ -905,8 +906,9 @@ input {
   /* Chat panel on mobile */
   .chatHeader {
     padding: 6px 10px;
-    gap: 8px;
-    flex-wrap: wrap;
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
   }
 
   .chatTitle {
@@ -917,10 +919,13 @@ input {
   .modeSelector {
     padding: 3px 6px;
     font-size: 10px;
+    /* display: none; */
   }
 
   .modelSelector {
-    min-width: 100px;
+    min-width: 88px;
+    max-width: 120px;
+    width: 104px;
   }
 
   .newChatBtn,
@@ -929,6 +934,7 @@ input {
   .stopBtn {
     padding: 4px 8px;
     font-size: 11px;
+    white-space: nowrap;
   }
 
   .chatMessages {
@@ -1064,6 +1070,8 @@ input {
   .chatHeader {
     padding: 4px 8px;
     gap: 4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
   }
 
   .newChatBtn,
@@ -1071,6 +1079,16 @@ input {
   .historyBtnWrap {
     padding: 3px 6px;
     font-size: 10px;
+    white-space: nowrap;
+  }
+  .modelSelector {
+    min-width: 80px;
+    max-width: 110px;
+    width: 96px;
+  }
+  .modeSelector {
+    min-width: 60px;
+    /* display: none; */
   }
 }
 
@@ -1094,7 +1112,8 @@ input {
   gap: 8px;
   background: var(--panel);
   flex-shrink: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .chatTitle {
@@ -1111,6 +1130,8 @@ input {
   background: #ffffff;
   color: var(--text);
   cursor: pointer;
+  min-width: 70px;
+  display: none;
 }
 
 .modelSelector {
@@ -1121,8 +1142,9 @@ input {
   background: #ffffff;
   color: var(--text);
   cursor: pointer;
-  min-width: 110px;
-  max-width: 160px;
+  min-width: 90px;
+  max-width: 140px;
+  width: 110px;
 }
 
 .loadingIndicator {
@@ -1372,7 +1394,7 @@ input {
   resize: none;
   background: #ffffff;
   color: var(--text);
-  line-height: 1.5;
+  /* line-height: 1.5; */
 }
 
 .chatInput textarea:focus {

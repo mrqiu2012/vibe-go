@@ -1,9 +1,24 @@
 {
-  "server": { "port": 3990 },
-  "roots": ["/path/to/your/allowed/workspace"],
+  "server": {
+    "port": 3990
+  },
+  "roots": [],
   "dangerousCommandDenylist": [
-    "sudo", "su", "rm", "shutdown", "reboot", "kill", "pkill",
-    "launchctl", "chmod", "chown", "chgrp", "dd", "diskutil", "mount", "umount"
+    "sudo",
+    "su",
+    "rm",
+    "shutdown",
+    "reboot",
+    "kill",
+    "pkill",
+    "launchctl",
+    "chmod",
+    "chown",
+    "chgrp",
+    "dd",
+    "diskutil",
+    "mount",
+    "umount"
   ],
   "limits": {
     "timeoutSec": 900,

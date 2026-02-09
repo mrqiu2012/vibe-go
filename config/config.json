@@ -2,10 +2,6 @@
   "server": {
     "port": 3990
   },
-  "roots": [
-    "E:\\phpstudy_pro\\WWW",
-    "C:\\phpstudy_pro\\WWW"
-  ],
   "dangerousCommandDenylist": [
     "sudo",
     "su",

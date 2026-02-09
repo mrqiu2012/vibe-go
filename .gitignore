@@ -44,6 +44,7 @@ coverage/
 data/agent-buffers/
 
 # SQLite WAL runtime files (keep only .db and schema.sql in repo)
+data/*.db
 data/*.db-shm
 data/*.db-wal
 
@@ -52,7 +53,14 @@ Thumbs.db
 ehthumbs.db
 
 # Local config (contains machine-specific paths); use config.example.json as template
-config/config.json
+config/config.local.json
+config/*.local.json
+config/roots.local.json
 
 # Setup completion flag (local only, do not commit)
 config/.setup-done
+
+# SQLite variants (if present)
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal

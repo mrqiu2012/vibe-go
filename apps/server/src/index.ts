@@ -10,7 +10,7 @@ import type { Response } from "express";
 import cors from "cors";
 import { execa } from "execa";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, rootsOverridePath, readRootsOverride } from "./config.js";
 import { normalizeRoots, validatePathInRoots } from "./pathGuard.js";
 import { listDir, readTextFile, writeTextFile, createDir } from "./fsApi.js";
 import { attachTermWs } from "./term/wsTerm.js";
@@ -322,6 +322,7 @@ async function main() {
   console.log("[server] main() started");
   const repoRoot = getRepoRoot();
   const configPath = process.env.CONFIG_PATH ?? path.join(repoRoot, "config", "config.json");
+  const rootsPath = rootsOverridePath(configPath);
   const setupDonePath = path.join(path.dirname(configPath), ".setup-done");
   let cfg: Awaited<ReturnType<typeof loadConfig>>;
   try {
@@ -334,13 +335,18 @@ async function main() {
   try {
     roots = await normalizeRoots(cfg.roots);
   } catch (e) {
-    console.warn("[config] No valid roots from config, using process.cwd() as fallback:", (e as Error)?.message);
-    const fallback = process.cwd();
-    try {
-      const st = await fs.promises.stat(fallback);
-      roots = st.isDirectory() ? [fallback] : [path.join(fallback, "..")];
-    } catch {
-      roots = [path.resolve(fallback, "..")];
+    if (!cfg.roots || cfg.roots.length === 0) {
+      console.warn("[config] No roots configured yet; setup is required.");
+      roots = [];
+    } else {
+      console.warn("[config] No valid roots from config, using process.cwd() as fallback:", (e as Error)?.message);
+      const fallback = process.cwd();
+      try {
+        const st = await fs.promises.stat(fallback);
+        roots = st.isDirectory() ? [fallback] : [path.join(fallback, "..")];
+      } catch {
+        roots = [path.resolve(fallback, "..")];
+      }
     }
   }
 
@@ -562,13 +568,20 @@ async function main() {
       // Validate it's a directory and normalize.
       const norm = (await normalizeRoots([rootRaw]))[0];
 
-      const raw = await fs.promises.readFile(configPath, "utf8");
-      const parsed = JSON.parse(raw) as any;
-      const existing = Array.isArray(parsed?.roots) ? parsed.roots.map(String) : [];
+      // Prefer roots override file; fall back to config.json roots if present.
+      let existing = (await readRootsOverride(rootsPath)) ?? [];
+      if (existing.length === 0) {
+        try {
+          const raw = await fs.promises.readFile(configPath, "utf8");
+          const parsed = JSON.parse(raw) as any;
+          if (Array.isArray(parsed?.roots)) existing = parsed.roots.map(String);
+        } catch {
+          /* ignore */
+        }
+      }
       const merged = Array.from(new Set([...existing, norm]));
-      parsed.roots = merged;
-
-      await fs.promises.writeFile(configPath, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+      await fs.promises.mkdir(path.dirname(rootsPath), { recursive: true });
+      await fs.promises.writeFile(rootsPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
 
       // Mark setup as done (local flag file, git-ignored)
       try {
@@ -580,7 +593,7 @@ async function main() {
       } catch {}
 
       // Refresh in-memory roots for this running server.
-      roots = await normalizeRoots(parsed.roots);
+      roots = await normalizeRoots(merged);
 
       if (setActive) {
         try {
@@ -594,7 +607,7 @@ async function main() {
         const db = await getDbModule();
         activeRoot = setActive ? norm : (db.getActiveRoot() ?? norm);
       } catch {}
-      res.json({ ok: true, roots, activeRoot, configPath });
+      res.json({ ok: true, roots, activeRoot, configPath, rootsPath });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }

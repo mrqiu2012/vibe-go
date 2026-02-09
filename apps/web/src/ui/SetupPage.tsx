@@ -348,18 +348,24 @@ export function SetupPage() {
             {currentStep === 3 && (
               <>
                 <h2>第三步：初始化数据库</h2>
-                <p>初始化本地数据库，用于保存聊天记录、工作区等。点击下方按钮完成初始化。</p>
+                <p>初始化本地数据库，用于保存聊天记录、工作区等。</p>
                 {!dbInitDone ? (
                   <>
-                    <button
-                      type="button"
-                      className="setupPrimaryBtn"
-                      onClick={handleInitDb}
-                      disabled={dbInitLoading}
-                    >
-                      {dbInitLoading ? "初始化中…" : "初始化数据库"}
-                    </button>
+                    <div className="setupRow">
+                      <button
+                        type="button"
+                        className="setupPrimaryBtn"
+                        onClick={handleInitDb}
+                        disabled={dbInitLoading}
+                      >
+                        {dbInitLoading ? "初始化中…" : "初始化数据库"}
+                      </button>
+                     
+                    </div>
                     {installResult?.tool === "db" && !installResult?.ok && (
+                      <p className="setupStatus setupStatusFail">✗ {installResult.msg}</p>
+                    )}
+                    {installResult?.tool === "complete" && !installResult?.ok && (
                       <p className="setupStatus setupStatusFail">✗ {installResult.msg}</p>
                     )}
                   </>

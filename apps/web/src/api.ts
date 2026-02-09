@@ -1,8 +1,25 @@
-/** 开发时前端 3989、后端 3990，直接请求后端；生产可为同源或空 */
-export const API_BASE =
-  typeof import.meta !== "undefined" && import.meta.env?.DEV
-    ? "http://localhost:3990"
-    : "";
+/** API base resolution:
+ * - If VITE_API_BASE is set, use it.
+ * - In dev, default to same host with backend port 3990 (works for LAN/Tailscale).
+ * - If already on backend port, use same origin.
+ * - In production, prefer same-origin unless overridden.
+ */
+function resolveApiBase(): string {
+  const envBase = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_API_BASE as string | undefined) : undefined;
+  if (envBase && envBase.trim()) return envBase.trim().replace(/\/$/, "");
+
+  if (typeof window === "undefined") return "";
+  const loc = window.location;
+  const isDev = typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+  if (!isDev) return "";
+
+  if (loc.port === "3990") return loc.origin;
+  const proto = loc.protocol;
+  const host = loc.hostname;
+  return `${proto}//${host}:3990`;
+}
+
+export const API_BASE = resolveApiBase();
 
 export function apiUrl(path: string): string {
   const base = API_BASE.replace(/\/$/, "");
