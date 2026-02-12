@@ -799,6 +799,221 @@ input {
     display: none;
   }
 
+  /* 移动端 topbar：展开/折叠侧边栏按钮 */
+  .mobileSidebarToggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 200ms ease-out, border-color 200ms ease-out;
+  }
+  .mobileSidebarToggle:hover {
+    background: var(--panel2);
+    border-color: #cbd5e1;
+  }
+  .mobileSidebarToggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* 移动端 topbar：当前项目文件夹名（按钮右侧） */
+  .mobileTopbarProjectName {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--muted);
+    padding: 0 4px;
+  }
+
+  /* 移动端 Cursor Chat 头部 portaled 到此槽内 */
+  .mobileChatHeaderSlot {
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+  .mobileChatHeaderSlot .chatHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0;
+    border: none;
+    background: transparent;
+    min-height: 0;
+  }
+  .mobileChatHeaderSlot .modeSelector,
+  .mobileChatHeaderSlot .modelSelector {
+    padding: 4px 6px;
+    font-size: 13px;
+    min-height: 0;
+    line-height: 1.3;
+  }
+  .mobileChatHeaderSlot .modelSelector {
+    min-width: 0;
+    max-width: 120px;
+  }
+  .mobileChatHeaderSlot .newChatBtn,
+  .mobileChatHeaderSlot .historyBtnWrap {
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+  .mobileChatHeaderSlot .historyBtnLabel {
+    font-size: 13px;
+  }
+
+  /* 工作区抽屉：遮罩 */
+  .mobileWorkspaceDrawerOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    z-index: 110;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease-out;
+  }
+  .mobileWorkspaceDrawerOverlay.mobileWorkspaceDrawerOpen {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 工作区抽屉：面板 */
+  .mobileWorkspaceDrawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(280px, 85vw);
+    max-width: 280px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    z-index: 111;
+    transform: translateX(-100%);
+    transition: transform 200ms ease-out;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .mobileWorkspaceDrawer.mobileWorkspaceDrawerOpen {
+    transform: translateX(0);
+  }
+  /* 侧边栏内：根目录选择 */
+  .mobileWorkspaceDrawerRootSection {
+    flex-shrink: 0;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mobileWorkspaceDrawerRootLabel {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .mobileWorkspaceDrawerRootSelect {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .mobileWorkspaceDrawerHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .mobileWorkspaceDrawerTitle {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .mobileWorkspaceDrawerClose {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: background 200ms ease-out, border-color 200ms ease-out;
+  }
+  .mobileWorkspaceDrawerClose:hover {
+    background: var(--panel2);
+    border-color: #cbd5e1;
+    color: var(--text);
+  }
+  .mobileWorkspaceDrawerClose:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .mobileWorkspaceDrawerList {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mobileWorkspaceDrawerList .workspaceTab {
+    max-width: none;
+    align-items: flex-start;
+  }
+  .mobileWorkspaceDrawerList .workspaceTabLabel {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mobileWorkspaceDrawerList .workspaceTabName {
+    max-width: none;
+  }
+  .mobileWorkspaceDrawerList .workspaceTabCwd {
+    font-size: 10px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mobileWorkspaceDrawerOverlay,
+    .mobileWorkspaceDrawer {
+      transition: none;
+    }
+  }
+
   .panelHeader {
     padding: 6px 8px;
     gap: 6px;
@@ -1394,7 +1609,7 @@ input {
   resize: none;
   background: #ffffff;
   color: var(--text);
-  /* line-height: 1.5; */
+  line-height: 1;
 }
 
 .chatInput textarea:focus {

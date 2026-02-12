@@ -311,6 +311,7 @@ function TreeView(props: {
 export function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileTab, setMobileTab] = useState<"explorer" | "editor" | "terminal">("terminal");
+  const [mobileWorkspaceDrawerOpen, setMobileWorkspaceDrawerOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
@@ -345,6 +346,19 @@ export function App() {
     }, 3000);
     return () => clearTimeout(timer);
   }, [status]);
+
+  // Escape closes mobile workspace drawer
+  useEffect(() => {
+    if (!mobileWorkspaceDrawerOpen || !isMobile) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMobileWorkspaceDrawerOpen(false);
+        mobileSidebarToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileWorkspaceDrawerOpen, isMobile]);
 
   // Workspace management
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -402,6 +416,8 @@ export function App() {
   const mobileKeysTouchedRef = useRef(false);
   const termMobileControlsRef = useRef<HTMLDivElement | null>(null);
   const lastMobileControlsHRef = useRef<number>(-1);
+  const mobileSidebarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const chatHeaderContainerRef = useRef<HTMLDivElement | null>(null);
   const collapsedPanelWidth = 48;
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -1192,6 +1208,7 @@ export function App() {
       setActiveFile(r.path);
       setEditorMode("edit");
       if (!isMobile) setPanelEditorCollapsed(false); // 点击文件时若编辑器折叠则展开
+      if (isMobile) setMobileTab("editor"); // 移动端点击文件名自动跳转到编辑器
       setOpenTabs((prev) => (prev.includes(r.path) ? prev : [...prev, r.path]));
       setFileStateByPath((prev) => ({
         ...prev,
@@ -2368,33 +2385,24 @@ export function App() {
       {isMobile ? (
         <div className="appMobile">
           <div className="topbar">
-            <select
-              className="select"
-              value={activeRoot}
-              onChange={(e) => {
-                manualRootOverrideRef.current = true;
-                setActiveRoot(e.target.value);
-                setTerminalCwd(e.target.value);
-                setOpenTabs([]);
-                setActiveFile("");
-                setFileStateByPath({});
-                setEditorMode("edit");
-                setExplorerUserPath(e.target.value);
-              }}
-              disabled={roots.length === 0}
-              title="根目录"
-              style={{ flex: 1, minWidth: 0 }}
+            <button
+              ref={mobileSidebarToggleRef}
+              type="button"
+              className="mobileSidebarToggle"
+              onClick={() => setMobileWorkspaceDrawerOpen((prev) => !prev)}
+              aria-label={mobileWorkspaceDrawerOpen ? "折叠侧边栏" : "展开侧边栏"}
+              aria-expanded={mobileWorkspaceDrawerOpen}
+              title={mobileWorkspaceDrawerOpen ? "折叠侧边栏" : "展开侧边栏"}
             >
-              {roots.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-           
+              <span aria-hidden>{mobileWorkspaceDrawerOpen ? "✕" : "≡"}</span>
+            </button>
+            <span className="mobileTopbarProjectName" title={terminalCwd || activeWorkspace?.cwd || activeRoot}>
+              {activeWorkspace ? activeWorkspace.name : activeRoot ? baseName(activeRoot) : ""}
+            
+            </span>
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
-                文件
+                文件夹
               </button>
               <button className={"tabBtn" + (mobileTab === "editor" ? " tabBtnActive" : "")} onClick={() => setMobileTab("editor")}>
                 编辑器
@@ -2526,32 +2534,6 @@ export function App() {
             className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")}
             style={{ flex: 1, minHeight: "65dvh" }}
           >
-            <div className="workspaceTabStrip">
-              {workspaces.length === 0 ? (
-                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
-              ) : (
-                workspaces.map((ws) => (
-                  <div
-                    key={ws.id}
-                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
-                    onClick={() => switchWorkspace(ws.id)}
-                    title={ws.cwd}
-                  >
-                    <span className="workspaceTabName">{ws.name}</span>
-                    <button
-                      className="workspaceTabClose"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeWorkspace(ws.id);
-                      }}
-                      title="关闭工作区"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
             <div className="panelHeader termPanelHeader">
               <div className="termPanelHeaderRow">
                 <div className="segmented" aria-label="终端模式">
@@ -2593,9 +2575,14 @@ export function App() {
                   </button>
                 )}
               </div>
-              <div className="termPanelHeaderCwd" title={terminalCwd}>
-                {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
-              </div>
+              {isMobile && termMode === "cursor" && (
+                <div ref={chatHeaderContainerRef} className="mobileChatHeaderSlot" />
+              )}
+              {!isMobile && (
+                <div className="termPanelHeaderCwd" title={terminalCwd}>
+                  {terminalCwd ? `工作目录: ${terminalCwd}` : ""}
+                </div>
+              )}
             </div>
             <div
               className={
@@ -2629,7 +2616,12 @@ export function App() {
                   overflow: "hidden",
                 }}
               >
-                <CursorChatPanel mode={cursorMode} onModeChange={setCursorMode} cwd={terminalCwd} />
+                <CursorChatPanel
+                  mode={cursorMode}
+                  onModeChange={setCursorMode}
+                  cwd={terminalCwd}
+                  headerContainerRef={isMobile && termMode === "cursor" ? chatHeaderContainerRef : undefined}
+                />
               </div>
               <div
                 className={
@@ -2709,6 +2701,117 @@ export function App() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {isMobile ? (
+        <>
+          <div
+            className={"mobileWorkspaceDrawerOverlay" + (mobileWorkspaceDrawerOpen ? " mobileWorkspaceDrawerOpen" : "")}
+            onClick={() => {
+              setMobileWorkspaceDrawerOpen(false);
+              mobileSidebarToggleRef.current?.focus();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setMobileWorkspaceDrawerOpen(false);
+                mobileSidebarToggleRef.current?.focus();
+              }
+            }}
+            aria-hidden
+          />
+          <div
+            className={"mobileWorkspaceDrawer" + (mobileWorkspaceDrawerOpen ? " mobileWorkspaceDrawerOpen" : "")}
+            role="dialog"
+            aria-modal="true"
+            aria-label="根目录与工作区"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mobileWorkspaceDrawerRootSection">
+              <label className="mobileWorkspaceDrawerRootLabel" htmlFor="mobileRootSelect">
+                根目录
+              </label>
+              <select
+                id="mobileRootSelect"
+                className="select mobileWorkspaceDrawerRootSelect"
+                value={activeRoot}
+                onChange={(e) => {
+                  manualRootOverrideRef.current = true;
+                  setActiveRoot(e.target.value);
+                  setTerminalCwd(e.target.value);
+                  setOpenTabs([]);
+                  setActiveFile("");
+                  setFileStateByPath({});
+                  setEditorMode("edit");
+                  setExplorerUserPath(e.target.value);
+                }}
+                disabled={roots.length === 0}
+                title="根目录"
+              >
+                {roots.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mobileWorkspaceDrawerHeader">
+              <h2 className="mobileWorkspaceDrawerTitle">工作区</h2>
+              <button
+                type="button"
+                className="mobileWorkspaceDrawerClose"
+                onClick={() => {
+                  setMobileWorkspaceDrawerOpen(false);
+                  mobileSidebarToggleRef.current?.focus();
+                }}
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mobileWorkspaceDrawerList">
+              {workspaces.length === 0 ? (
+                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
+              ) : (
+                workspaces.map((ws) => (
+                  <div
+                    key={ws.id}
+                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
+                    onClick={() => {
+                      switchWorkspace(ws.id);
+                      setMobileWorkspaceDrawerOpen(false);
+                    }}
+                    title={ws.cwd}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        switchWorkspace(ws.id);
+                        setMobileWorkspaceDrawerOpen(false);
+                      }
+                    }}
+                  >
+                    <div className="workspaceTabLabel">
+                      <span className="workspaceTabName">{ws.name}</span>
+                      <span className="workspaceTabCwd">{ws.cwd}</span>
+                    </div>
+                    <button
+                      className="workspaceTabClose"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeWorkspace(ws.id);
+                        setMobileWorkspaceDrawerOpen(false);
+                      }}
+                      title="关闭工作区"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
       ) : null}
 
       {pasteModalOpen ? (

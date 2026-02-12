@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -246,10 +247,13 @@ export function CursorChatPanel({
   mode,
   onModeChange,
   cwd,
+  headerContainerRef,
 }: {
   mode: "agent" | "plan" | "ask";
   onModeChange: (mode: "agent" | "plan" | "ask") => void;
   cwd: string;
+  /** When set (e.g. on mobile), the chat header is rendered into this container instead of inline. */
+  headerContainerRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
@@ -259,6 +263,7 @@ export function CursorChatPanel({
   const [chatId, setChatId] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("auto");
+  const [headerPortalReady, setHeaderPortalReady] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const runIdRef = useRef<string | null>(null);
   const assistantIdRef = useRef<string | null>(null);
@@ -268,6 +273,12 @@ export function CursorChatPanel({
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamDeadRef = useRef(false);
   const loadingRef = useRef(false);
+
+  // When header is portaled to external container, re-render once ref is set
+  useLayoutEffect(() => {
+    if (!headerContainerRef?.current) return;
+    setHeaderPortalReady(true);
+  }, [headerContainerRef]);
 
   // Load sessions from database on mount or cwd change (skip when cwd not yet set)
   useEffect(() => {
@@ -727,58 +738,66 @@ export function CursorChatPanel({
     }
   };
 
-  return (
-    <div className="cursorChatPanel">
-      <div className="chatHeader">
-        <select className="modeSelector" value={mode} onChange={(e) => onModeChange(e.target.value as any)}>
-          <option value="agent">Agent</option>
-          <option value="plan">Plan</option>
-          <option value="ask">Ask</option>
-        </select>
-        <select
-          className="modelSelector"
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          title="切换模型"
-        >
-          {CURSOR_MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
-          新建
-        </button>
-        <div
-          className={"historyBtnWrap" + (showHistory ? " historyBtnActive" : "") + (loading ? " historyBtnWrapDisabled" : "")}
-          title="查看聊天历史"
-          role="button"
-          tabIndex={loading ? -1 : 0}
-          aria-pressed={showHistory}
-          onClick={() => {
-            if (loading) return;
+  const chatHeaderEl = (
+    <div className="chatHeader">
+      <select className="modeSelector" value={mode} onChange={(e) => onModeChange(e.target.value as any)}>
+        <option value="agent">Agent</option>
+        <option value="plan">Plan</option>
+        <option value="ask">Ask</option>
+      </select>
+      <select
+        className="modelSelector"
+        value={selectedModel}
+        onChange={(e) => setSelectedModel(e.target.value)}
+        title="切换模型"
+      >
+        {CURSOR_MODELS.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
+        新建
+      </button>
+      <div
+        className={"historyBtnWrap" + (showHistory ? " historyBtnActive" : "") + (loading ? " historyBtnWrapDisabled" : "")}
+        title="查看聊天历史"
+        role="button"
+        tabIndex={loading ? -1 : 0}
+        aria-pressed={showHistory}
+        onClick={() => {
+          if (loading) return;
+          setShowHistory((prev) => !prev);
+        }}
+        onKeyDown={(e) => {
+          if (loading) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
             setShowHistory((prev) => !prev);
-          }}
-          onKeyDown={(e) => {
-            if (loading) return;
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setShowHistory((prev) => !prev);
-            }
-          }}
-        >
-          <span className="historyBtnLabel">历史 ({sessions.length})</span>
-        </div>
-        {loading && <span className="loadingIndicator">●</span>}
-        {loading ? (
-          <button className="stopBtn" onClick={handleStop} title="停止当前请求">
-            停止
-          </button>
-        ) : null}
+          }
+        }}
+      >
+        <span className="historyBtnLabel">历史 ({sessions.length})</span>
       </div>
+      {loading && <span className="loadingIndicator">●</span>}
+      {loading ? (
+        <button className="stopBtn" onClick={handleStop} title="停止当前请求">
+          停止
+        </button>
+      ) : null}
+    </div>
+  );
 
-      {showHistory ? (
+  const headerTarget = headerContainerRef?.current && headerPortalReady ? headerContainerRef.current : null;
+
+  return (
+    <>
+      {headerTarget && createPortal(chatHeaderEl, headerTarget)}
+      <div className="cursorChatPanel">
+        {!headerTarget && chatHeaderEl}
+
+        {showHistory ? (
         <div className="chatHistoryPanel">
           <div className="historyHeader">
             <span>聊天历史</span>
@@ -871,5 +890,6 @@ export function CursorChatPanel({
         </button>
       </div>
     </div>
+    </>
   );
 }

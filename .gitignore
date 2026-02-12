@@ -20,6 +20,10 @@ build/
 *~
 .DS_Store
 
+# Cursor / shared tooling (local rules and ui-ux-pro-max)
+.cursor/
+.shared/
+
 # Logs
 logs/
 *.log
