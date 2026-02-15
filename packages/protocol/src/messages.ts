@@ -16,7 +16,7 @@ export type TermOpenReq = {
   cwd: string; 
   cols?: number; 
   rows?: number;
-  mode?: "restricted" | "native" | "codex" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
+  mode?: "restricted" | "native" | "codex" | "claude" | "opencode" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
   options?: {
     prompt?: string;
     resume?: string;

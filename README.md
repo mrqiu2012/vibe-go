@@ -1,24 +1,24 @@
 # VibeGo
 
 **中文**  
-VibeGo 是一款本机两段式 Web IDE：目录树 + 文件编辑器 + 受限终端，并集成 Cursor CLI（`agent`）与 Codex CLI。
+VibeGo 是一款本机两段式 Web IDE：目录树 + 文件编辑器 + 受限终端，并集成 Cursor CLI（`agent`）、Codex CLI、Claude Code CLI（`claude`）与 OpenCode CLI（`opencode`）。
 
 **English**  
-VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, with Cursor CLI (`agent`) and Codex CLI integration.
+VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, with Cursor CLI (`agent`), Codex CLI, Claude Code CLI (`claude`), and OpenCode CLI (`opencode`) integration.
 
 ---
 
 **中文 | 主要特性**
 
 - 本地目录树与文件编辑器
-- 受限终端（Restricted / Codex / Cursor 模式）
+- 受限终端（Restricted / Codex / Claude / OpenCode / Cursor 模式）
 - 前后端分离，开发态端口清晰
 - Windows 兼容（CLI 路径查找、PTY 行为优化）
 
 **English | Highlights**
 
 - Local file tree and editor
-- Restricted terminal modes (Restricted / Codex / Cursor)
+- Restricted terminal modes (Restricted / Codex / Claude / OpenCode / Cursor)
 - Clear dev ports with separated frontend/backend
 - Windows-friendly CLI path handling and PTY behavior
 
@@ -32,7 +32,7 @@ VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, w
    终端环境（Windows 推荐 PowerShell）
 
 可选但推荐：  
-Cursor CLI（`agent`）、Ripgrep（`rg`）、Codex CLI（`codex`）
+Cursor CLI（`agent`）、Ripgrep（`rg`）、Codex CLI（`codex`）、Claude Code CLI（`claude`）、OpenCode CLI（`opencode`）
 
 2. 获取项目
 
@@ -113,6 +113,37 @@ npm i -g @openai/codex
 codex --version
 ```
 
+Claude Code CLI：
+
+```bash
+# 官方推荐（macOS/Linux/WSL）
+curl -fsSL https://claude.ai/install.sh | bash
+
+# 或 macOS Homebrew
+brew install --cask claude-code
+
+claude --version
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+claude --version
+```
+
+OpenCode CLI：
+
+```bash
+# 官方推荐
+curl -fsSL https://opencode.ai/install | bash
+
+# 或 npm
+npm install -g opencode-ai
+
+opencode --version
+```
+
 6. 启动项目
 
 ```bash
@@ -151,7 +182,7 @@ curl http://localhost:3990/api/roots
    Terminal (PowerShell recommended on Windows)
 
 Optional but recommended:  
-Cursor CLI (`agent`), Ripgrep (`rg`), Codex CLI (`codex`)
+Cursor CLI (`agent`), Ripgrep (`rg`), Codex CLI (`codex`), Claude Code CLI (`claude`), OpenCode CLI (`opencode`)
 
 2. Clone
 
@@ -225,6 +256,37 @@ npm i -g @openai/codex
 codex --version
 ```
 
+Claude Code CLI:
+
+```bash
+# Recommended (macOS/Linux/WSL)
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Or Homebrew on macOS
+brew install --cask claude-code
+
+claude --version
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+claude --version
+```
+
+OpenCode CLI:
+
+```bash
+# Recommended
+curl -fsSL https://opencode.ai/install | bash
+
+# Or npm
+npm install -g opencode-ai
+
+opencode --version
+```
+
 6. Start
 
 ```bash
@@ -259,7 +321,7 @@ You can skip DB initialization to enter the app, but chat/workspace features may
 
 - `agent` 首次运行需信任 Workspace（弹窗按 `a` 选择 Trust）
 - Windows 下启动建议使用前台命令（不要后台 Start-Process），否则 PTY 可能不可用
-- `agent`/`rg`/`codex` 找不到时，先检查 PATH，Windows 用 `where.exe` 验证  
+- `agent`/`rg`/`codex`/`claude`/`opencode` 找不到时，先检查 PATH，Windows 用 `where.exe` 验证  
   常见位置：`%LOCALAPPDATA%\\cursor-agent\\agent.cmd`，`%APPDATA%\\npm\\codex.cmd`
 
 Ripgrep 推荐通过 winget 安装：
@@ -285,7 +347,7 @@ if ($rgDir -and ($userPath -notlike "*$rgDir*")) {
 
 - First run of `agent` requires Workspace Trust (press `a`)
 - Start in a foreground terminal (avoid background Start-Process), or PTY may fail
-- If `agent`/`rg`/`codex` is not found, check PATH via `where.exe`  
+- If `agent`/`rg`/`codex`/`claude`/`opencode` is not found, check PATH via `where.exe`  
   Common locations: `%LOCALAPPDATA%\\cursor-agent\\agent.cmd`, `%APPDATA%\\npm\\codex.cmd`
 
 Install ripgrep with winget:
@@ -314,14 +376,14 @@ if ($rgDir -and ($userPath -notlike "*$rgDir*")) {
 - 3990 连接失败：后端未启动或崩溃，先运行 `pnpm dev:server`
 - 500 且后端已启动：查看后端日志，db 加载失败会返回 503
 - 3989/3990 被占用：运行 `pnpm dev:fresh`
-- 找不到 `agent`/`rg`/`codex`：检查 PATH，Windows 用 `where.exe`
+- 找不到 `agent`/`rg`/`codex`/`claude`/`opencode`：检查 PATH，Windows 用 `where.exe`
 
 **English | Troubleshooting**
 
 - 3990 connection refused: backend not running, try `pnpm dev:server`
 - 500 with backend up: check server logs; DB load failure returns 503
 - Ports 3989/3990 in use: run `pnpm dev:fresh`
-- `agent`/`rg`/`codex` not found: check PATH, use `where.exe` on Windows
+- `agent`/`rg`/`codex`/`claude`/`opencode` not found: check PATH, use `where.exe` on Windows
 
 ---
 

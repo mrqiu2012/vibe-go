@@ -850,6 +850,11 @@ input {
     padding-top: 4px;
     border-top: 1px solid var(--border);
   }
+  .mobileChatHeaderSlot:empty {
+    display: none;
+    padding-top: 0;
+    border-top: 0;
+  }
   .mobileChatHeaderSlot .chatHeader {
     display: flex;
     align-items: center;
@@ -1028,6 +1033,46 @@ input {
 
   .termPanelHeaderRow {
     flex-shrink: 0;
+    width: 100%;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  /* 移动端：模式分段 + 粘贴按钮同一行总宽度占满屏幕 */
+  .termPanelHeaderRow .segmented {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+  }
+
+  .termPanelHeaderRow .segmented::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .termPanelHeaderRow .segmented::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .termPanelHeaderRow .segmented::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.45);
+    border-radius: 999px;
+  }
+
+  .termPanelHeaderRow .segBtn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .termPanelHeaderRow .termPasteBtn {
+    flex: 0 0 auto;
   }
 
   .termPanelHeaderCwd {

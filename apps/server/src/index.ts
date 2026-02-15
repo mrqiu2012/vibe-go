@@ -184,7 +184,7 @@ async function checkCmdVersion(bin: string, args: string[] = ["--version"]) {
   }
 }
 
-type SetupInstallTool = "agent" | "rg" | "codex";
+type SetupInstallTool = "agent" | "rg" | "codex" | "claude" | "opencode";
 
 function getInstallHint(tool: SetupInstallTool) {
   const hints = getInstallHintsByPlatform(tool);
@@ -205,6 +205,20 @@ function getInstallHintsByPlatform(tool: SetupInstallTool): { darwin: string; wi
       darwin: "brew install ripgrep",
       win32: "winget install --id BurntSushi.ripgrep.MSVC -e --accept-source-agreements --accept-package-agreements",
       linux: "Install ripgrep (rg) via your package manager, e.g. apt/dnf/pacman",
+    };
+  }
+  if (tool === "claude") {
+    return {
+      darwin: "curl -fsSL https://claude.ai/install.sh | bash (or: brew install --cask claude-code)",
+      win32: "irm https://claude.ai/install.ps1 | iex (or: winget install Anthropic.ClaudeCode)",
+      linux: "curl -fsSL https://claude.ai/install.sh | bash",
+    };
+  }
+  if (tool === "opencode") {
+    return {
+      darwin: "curl -fsSL https://opencode.ai/install | bash (or: npm install -g opencode-ai)",
+      win32: "npm install -g opencode-ai",
+      linux: "curl -fsSL https://opencode.ai/install | bash (or: npm install -g opencode-ai)",
     };
   }
   // codex (same on all platforms)
@@ -238,6 +252,29 @@ async function canAutoInstall(tool: SetupInstallTool): Promise<{ ok: true } | { 
       return { ok: true };
     }
     return { ok: false, reason: "Auto install for rg is not supported on this platform in setup (distro-specific)." };
+  }
+
+  if (tool === "claude") {
+    if (process.platform === "darwin") {
+      const hasBrew = Boolean(await whichBin("brew"));
+      if (!hasBrew) return { ok: false, reason: "Homebrew not found (brew). Install Claude Code manually." };
+      return { ok: true };
+    }
+    if (process.platform === "win32") {
+      const hasWinget = Boolean(await whichBin("winget"));
+      if (!hasWinget) return { ok: false, reason: "winget not found. Install Claude Code manually." };
+      return { ok: true };
+    }
+    const hasCurl = Boolean(await whichBin("curl"));
+    const hasBash = Boolean(await whichBin("bash"));
+    if (!hasCurl || !hasBash) return { ok: false, reason: "Missing curl/bash. Install Claude Code manually." };
+    return { ok: true };
+  }
+
+  if (tool === "opencode") {
+    const hasNpm = Boolean(await whichBin(process.platform === "win32" ? "npm.cmd" : "npm")) || Boolean(await whichBin("npm"));
+    if (!hasNpm) return { ok: false, reason: "npm not found. Install Node.js (includes npm) first." };
+    return { ok: true };
   }
 
   // codex
@@ -283,6 +320,21 @@ async function runAutoInstall(tool: SetupInstallTool) {
       );
     }
     throw new Error("Auto install for rg is not supported on this platform.");
+  }
+
+  if (tool === "claude") {
+    if (process.platform === "darwin") {
+      return await execa("brew", ["install", "--cask", "claude-code"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
+    }
+    if (process.platform === "win32") {
+      return await execa("winget", ["install", "Anthropic.ClaudeCode"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
+    }
+    const cmd = "curl -fsSL https://claude.ai/install.sh | bash";
+    return await execa("bash", ["-lc", cmd], { timeout, maxBuffer: 10 * 1024 * 1024, env });
+  }
+
+  if (tool === "opencode") {
+    return await execa("npm", ["install", "-g", "opencode-ai"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
   }
 
   // codex
@@ -430,6 +482,8 @@ async function main() {
       };
       // 避免 checkCmdVersion 内部未捕获的异常导致整次请求 500
       const tools = {
+        opencode: await checkOne("opencode"),
+        claude: await checkOne("claude"),
         codex: await checkOne("codex"),
         cursor: await checkOne("cursor"),
         agent: await checkOne("agent"),
@@ -458,6 +512,8 @@ async function main() {
         tools,
         cursorAppPaths,
         installHints: {
+          opencode: getInstallHintsByPlatform("opencode"),
+          claude: getInstallHintsByPlatform("claude"),
           agent: getInstallHintsByPlatform("agent"),
           rg: getInstallHintsByPlatform("rg"),
           codex: getInstallHintsByPlatform("codex"),
@@ -498,7 +554,7 @@ async function main() {
     if (!isLocalReq(req)) return res.status(403).json({ ok: false, error: "仅允许本机访问" });
     try {
       const tool = String((req.body as any)?.tool ?? "") as SetupInstallTool;
-      if (tool !== "agent" && tool !== "rg" && tool !== "codex") {
+      if (tool !== "agent" && tool !== "rg" && tool !== "codex" && tool !== "claude" && tool !== "opencode") {
         return res.status(400).json({ ok: false, error: "Invalid tool" });
       }
 
@@ -514,7 +570,11 @@ async function main() {
           ? await checkCmdVersion("agent", ["--version"])
           : tool === "rg"
             ? await checkCmdVersion("rg", ["--version"])
-            : await checkCmdVersion("codex", ["--version"]);
+            : tool === "claude"
+              ? await checkCmdVersion("claude", ["--version"])
+              : tool === "opencode"
+                ? await checkCmdVersion("opencode", ["--version"])
+              : await checkCmdVersion("codex", ["--version"]);
 
       res.json({
         ok: true,

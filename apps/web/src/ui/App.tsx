@@ -383,13 +383,13 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
-  const termSessionModeRef = useRef<"restricted" | "codex" | "agent" | "plan" | "ask" | "native" | "">("");
+  const termSessionModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "native" | "">("");
   const termSessionIsPtyRef = useRef(false);
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
   // Buffer term.data that arrives before term.open.resp (sessionId not set yet) so we don't drop initial output
   const termPendingDataBufferRef = useRef<Map<string, string[]>>(new Map());
-  const [termMode, setTermMode] = useState<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
-  const termModeRef = useRef<"restricted" | "codex" | "cursor" | "cursor-cli">("cursor");
+  const [termMode, setTermMode] = useState<"restricted" | "codex" | "claude" | "opencode" | "cursor" | "cursor-cli">("cursor");
+  const termModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "cursor" | "cursor-cli">("cursor");
   const [restrictedNonce, setRestrictedNonce] = useState(0);
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
   const cursorModeRef = useRef<"agent" | "plan" | "ask">("agent");
@@ -465,7 +465,7 @@ export function App() {
     }
 
     void client.stdin(sid, data).catch((e) => {
-      if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
+      if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "cursor-cli") {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
       } else {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
@@ -1370,7 +1370,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFile, fileText]);
 
-  // Terminal init: only when a mode that shows the terminal (Codex/Restricted/cursor-cli).
+  // Terminal init: only when a mode that shows the terminal (Codex/Claude/OpenCode/Restricted/cursor-cli).
   // In Cursor mode we don't create the terminal so xterm is never opened in a 0x0 hidden container.
   useEffect(() => {
     if (!terminalVisible) return;
@@ -1395,7 +1395,7 @@ export function App() {
     term.loadAddon(fit);
     term.open(el);
     termInitedRef.current = true;
-    // Container is visible (Codex/Restricted/cursor-cli); fit after layout.
+    // Container is visible (Codex/Claude/OpenCode/Restricted/cursor-cli); fit after layout.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         safeFitTerm();
@@ -1506,8 +1506,8 @@ export function App() {
             }
           }
         } else {
-          // Buffer for Codex and Cursor CLI in case output arrives before open.resp.
-          if (termModeRef.current === "codex" || termModeRef.current === "cursor-cli") {
+          // Buffer for Codex/Claude/OpenCode/Cursor CLI in case output arrives before open.resp.
+          if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "cursor-cli") {
             if (!termPendingDataBufferRef.current.has(sid)) termPendingDataBufferRef.current.set(sid, []);
             termPendingDataBufferRef.current.get(sid)!.push(m.data);
           }
@@ -1524,10 +1524,19 @@ export function App() {
           termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[codex 已退出 ${m.code ?? "?"}]\r\n`);
+        } else if (sessionMode === "claude") {
+          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[claude 已退出 ${m.code ?? "?"}]\r\n`);
+        } else if (sessionMode === "opencode") {
+          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[opencode 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (
-          sessionMode === "agent" ||
-          sessionMode === "plan" ||
-          sessionMode === "ask" ||
           sessionMode === "cursor-cli-agent" ||
           sessionMode === "cursor-cli-plan" ||
           sessionMode === "cursor-cli-ask"
@@ -1691,9 +1700,8 @@ export function App() {
           | "restricted"
           | "native"
           | "codex"
-          | "agent"
-          | "plan"
-          | "ask"
+          | "claude"
+          | "opencode"
           | "cursor-cli-agent"
           | "cursor-cli-plan"
           | "cursor-cli-ask";
@@ -1703,12 +1711,12 @@ export function App() {
             | "cursor-cli-plan"
             | "cursor-cli-ask";
         } else {
-          actualMode = termMode; // termMode here is "restricted" | "codex"
+          actualMode = termMode; // termMode here is "restricted" | "codex" | "claude" | "opencode"
         }
         logTerm("actualMode", { actualMode });
         
-        // Reset terminal when switching into codex/cursor-cli/restricted to avoid mixing outputs.
-        if (termMode === "codex" || termMode === "cursor-cli" || termMode === "restricted") {
+        // Reset terminal when switching into codex/claude/opencode/cursor-cli/restricted to avoid mixing outputs.
+        if (termMode === "codex" || termMode === "claude" || termMode === "opencode" || termMode === "cursor-cli" || termMode === "restricted") {
           term.reset();
         } else {
           term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
@@ -1720,9 +1728,8 @@ export function App() {
         termSessionModeRef.current = actualMode;
         const isPtySession =
           actualMode === "codex" ||
-          actualMode === "agent" ||
-          actualMode === "plan" ||
-          actualMode === "ask" ||
+          actualMode === "claude" ||
+          actualMode === "opencode" ||
           actualMode === "cursor-cli-agent" ||
           actualMode === "cursor-cli-plan" ||
           actualMode === "cursor-cli-ask" ||
@@ -1792,7 +1799,7 @@ export function App() {
           await client.stdin(resp.sessionId, pending).catch(() => {});
         }
 
-        if (!isPtySession && termMode !== "codex" && termMode !== "cursor-cli") term.write("$ ");
+        if (!isPtySession && termMode !== "codex" && termMode !== "claude" && termMode !== "opencode" && termMode !== "cursor-cli") term.write("$ ");
       } catch (e: any) {
         lastOpenKeyRef.current = "";
           setStatus(`[错误] 终端: ${e?.message ?? String(e)}`);
@@ -2149,7 +2156,7 @@ export function App() {
                 ? undefined
                 : panelTerminalCollapsed
                   ? collapsedPanelWidth
-                  : termMode === "cursor-cli"
+                  : termMode === "cursor-cli" || termMode === "claude" || termMode === "opencode"
                     ? 520
                     : 0,
               minHeight: isMobile ? "65dvh" : undefined,
@@ -2226,6 +2233,20 @@ export function App() {
                   }}>
                     Codex
                   </button>
+                  <button className={"segBtn" + (termMode === "claude" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("claude");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    Claude
+                  </button>
+                  <button className={"segBtn" + (termMode === "opencode" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("opencode");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    OpenCode
+                  </button>
                   <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => {
                     setTermMode("cursor-cli");
                     termRef.current?.focus();
@@ -2257,7 +2278,7 @@ export function App() {
                           setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
                         }}
                       >
-                        粘贴
+                        粘贴命令
                       </button>
                     )}
                   </div>
@@ -2547,6 +2568,12 @@ export function App() {
                   <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => setTermMode("codex")}>
                     Codex
                   </button>
+                  <button className={"segBtn" + (termMode === "claude" ? " segBtnActive" : "")} onClick={() => setTermMode("claude")}>
+                    Claude
+                  </button>
+                  <button className={"segBtn" + (termMode === "opencode" ? " segBtnActive" : "")} onClick={() => setTermMode("opencode")}>
+                    OpenCode
+                  </button>
                   <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => setTermMode("cursor-cli")}>
                     Cursor CLI
                   </button>
@@ -2571,7 +2598,7 @@ export function App() {
                       setTimeout(() => pasteModalTextareaRef.current?.focus(), 80);
                     }}
                   >
-                    粘贴
+                    粘贴命令
                   </button>
                 )}
               </div>

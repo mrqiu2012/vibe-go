@@ -9,13 +9,13 @@ type SetupCheck = {
   ok: boolean;
   platform?: string;
   roots?: string[];
-  tools?: { agent: ToolStatus; codex: ToolStatus; cursor: ToolStatus; rg: ToolStatus };
-  installHints?: { agent: InstallHintsByPlatform; rg: InstallHintsByPlatform; codex: InstallHintsByPlatform };
+  tools?: { agent: ToolStatus; codex: ToolStatus; claude: ToolStatus; opencode: ToolStatus; cursor: ToolStatus; rg: ToolStatus };
+  installHints?: { agent: InstallHintsByPlatform; rg: InstallHintsByPlatform; codex: InstallHintsByPlatform; claude: InstallHintsByPlatform; opencode: InstallHintsByPlatform };
 };
 
 const STEPS = [
   { id: 1, title: "选择根目录" },
-  { id: 2, title: "安装 Cursor / Codex（手动）" },
+  { id: 2, title: "安装 Cursor / Codex / Claude / OpenCode（手动）" },
   { id: 3, title: "初始化数据库" },
 ] as const;
 
@@ -256,11 +256,11 @@ export function SetupPage() {
               </>
             )}
 
-            {/* 第二步：安装 Cursor / Codex（仅手动安装说明） */}
+            {/* 第二步：安装 Cursor / Codex / Claude / OpenCode（仅手动安装说明） */}
             {currentStep === 2 && (
               <>
-                <h2>第二步：安装 Cursor / Codex（手动安装）</h2>
-                <p>以下工具用于 Cursor Chat、Codex 终端等功能。请根据当前检测状态，在终端中按下方说明手动安装。未安装也可跳过，但相关功能将无法使用。</p>
+                <h2>第二步：安装 Cursor / Codex / Claude / OpenCode（手动安装）</h2>
+                <p>以下工具用于 Cursor Chat、Codex/Claude/OpenCode 终端等功能。请根据当前检测状态，在终端中按下方说明手动安装。未安装也可跳过，但相关功能将无法使用。</p>
                 <div className="setupToolGrid">
                   {tools?.agent !== undefined && (
                     <div className="setupToolCard">
@@ -310,6 +310,54 @@ export function SetupPage() {
                       )}
                     </div>
                   )}
+                  {tools?.claude !== undefined && (
+                    <div className="setupToolCard">
+                      <div className="setupToolRow">
+                        <span className="setupToolName">Claude Code</span>
+                        {tools.claude.ok ? (
+                          <span className="setupToolStatus setupStatusOk">✓ 已安装{tools.claude.version ? ` ${tools.claude.version}` : null}</span>
+                        ) : (
+                          <span className="setupToolStatus setupStatusFail">✗ 未安装</span>
+                        )}
+                      </div>
+                      {!tools.claude.ok && hints?.claude && (
+                        <div className="setupToolStatusBody">
+                          <div className="setupManualBlock">
+                            <span className="setupManualLabel">安装方法</span>
+                            <ul className="setupPlatformHints">
+                              <li><span className="setupPlatformLabel">macOS</span><code className="setupToolHint">{hints.claude.darwin}</code></li>
+                              <li><span className="setupPlatformLabel">Windows</span><code className="setupToolHint">{hints.claude.win32}</code></li>
+                              <li><span className="setupPlatformLabel">Linux</span><code className="setupToolHint">{hints.claude.linux}</code></li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {tools?.opencode !== undefined && (
+                    <div className="setupToolCard">
+                      <div className="setupToolRow">
+                        <span className="setupToolName">OpenCode</span>
+                        {tools.opencode.ok ? (
+                          <span className="setupToolStatus setupStatusOk">✓ 已安装{tools.opencode.version ? ` ${tools.opencode.version}` : null}</span>
+                        ) : (
+                          <span className="setupToolStatus setupStatusFail">✗ 未安装</span>
+                        )}
+                      </div>
+                      {!tools.opencode.ok && hints?.opencode && (
+                        <div className="setupToolStatusBody">
+                          <div className="setupManualBlock">
+                            <span className="setupManualLabel">安装方法</span>
+                            <ul className="setupPlatformHints">
+                              <li><span className="setupPlatformLabel">macOS</span><code className="setupToolHint">{hints.opencode.darwin}</code></li>
+                              <li><span className="setupPlatformLabel">Windows</span><code className="setupToolHint">{hints.opencode.win32}</code></li>
+                              <li><span className="setupPlatformLabel">Linux</span><code className="setupToolHint">{hints.opencode.linux}</code></li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {tools?.rg !== undefined && (
                     <div className="setupToolCard">
                       <div className="setupToolRow">
@@ -339,7 +387,7 @@ export function SetupPage() {
                   <button type="button" className="setupSkipBtn" onClick={() => setStep2Skipped(true)}>
                     跳过此步
                   </button>
-                  <span className="setupSkipHint">跳过则无法正常使用 Cursor Chat、Codex 终端等功能。</span>
+                  <span className="setupSkipHint">跳过则无法正常使用 Cursor Chat、Codex/Claude/OpenCode 终端等功能。</span>
                 </div>
               </>
             )}
