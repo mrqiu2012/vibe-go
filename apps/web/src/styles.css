@@ -1159,6 +1159,14 @@ input {
     min-height: 180px;
   }
 
+  /* Cursor Chat 区域在移动端保证有高度，会话记录可显示 */
+  .panel:not(.hidden) .termChatWrap.termPaneActive {
+    flex: 1;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+  }
+
   .term {
     padding: 2px;
   }
@@ -1246,15 +1254,26 @@ input {
     font-size: 11px;
   }
 
-  /* History panel on mobile：与对话框等高 */
+  /* History panel on mobile：与对话框等高，保证可见且可滚动 */
   .chatHistoryPanel {
+    display: flex;
+    flex-direction: column;
     flex: 1;
+    min-height: 120px; /* 保证列表区域至少可见 */
+    overflow: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .historyList {
+    -webkit-overflow-scrolling: touch;
+    overflow-y: auto;
     min-height: 0;
   }
 
   .historyHeader {
     padding: 8px 12px;
     font-size: 12px;
+    flex-shrink: 0;
   }
 
   .historyItem {

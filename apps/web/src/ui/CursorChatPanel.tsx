@@ -109,11 +109,26 @@ function buildStreamHandler(
 
 type ModelOption = { id: string; label: string };
 
-/** 固定模型列表，不请求 Cursor CLI */
+/** 固定模型列表，不请求 Cursor CLI；与 Cursor 官方文档 Models 页保持一致。超过 24 小时可复查 docs.cursor.com 更新。 */
 const CURSOR_MODELS: ModelOption[] = [
   { id: "auto", label: "Auto（当前）" },
-  { id: "composer-1", label: "Composer 1" },
+  // 官方文档顺序（docs.cursor.com get-started/models）
+  { id: "sonnet-4.5", label: "Claude 4.5 Sonnet" },
+  { id: "opus-4.6", label: "Claude 4.6 Opus" },
+  { id: "composer-1.5", label: "Composer 1.5" },
+  { id: "gemini-3-flash", label: "Gemini 3 Flash" },
+  { id: "gemini-3-pro", label: "Gemini 3 Pro" },
   { id: "gpt-5.2", label: "GPT-5.2" },
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+  { id: "grok-code", label: "Grok Code" },
+  // Claude
+  { id: "opus-4.5-thinking", label: "Claude 4.5 Opus (Thinking)（默认）" },
+  { id: "opus-4.5", label: "Claude 4.5 Opus" },
+  { id: "sonnet-4.5-thinking", label: "Claude 4.5 Sonnet (Thinking)" },
+  // Composer
+  { id: "composer-1", label: "Composer 1" },
+  // GPT-5.2 / Codex
+  { id: "gpt-5.2-high", label: "GPT-5.2 High" },
   { id: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
   { id: "gpt-5.2-codex-high", label: "GPT-5.2 Codex High" },
   { id: "gpt-5.2-codex-low", label: "GPT-5.2 Codex Low" },
@@ -124,14 +139,8 @@ const CURSOR_MODELS: ModelOption[] = [
   { id: "gpt-5.2-codex-xhigh-fast", label: "GPT-5.2 Codex Extra High Fast" },
   { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
   { id: "gpt-5.1-codex-max-high", label: "GPT-5.1 Codex Max High" },
-  { id: "opus-4.5-thinking", label: "Claude 4.5 Opus (Thinking)（默认）" },
-  { id: "gpt-5.2-high", label: "GPT-5.2 High" },
-  { id: "gemini-3-pro", label: "Gemini 3 Pro" },
-  { id: "opus-4.5", label: "Claude 4.5 Opus" },
-  { id: "sonnet-4.5", label: "Claude 4.5 Sonnet" },
-  { id: "sonnet-4.5-thinking", label: "Claude 4.5 Sonnet (Thinking)" },
   { id: "gpt-5.1-high", label: "GPT-5.1 High" },
-  { id: "gemini-3-flash", label: "Gemini 3 Flash" },
+  // 其他
   { id: "grok", label: "Grok" },
 ];
 
