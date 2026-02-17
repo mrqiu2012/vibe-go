@@ -317,6 +317,13 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [topHeight, setTopHeight] = useState(49); // 终端区域宽度百分比（桌面端左右分栏）
   const [isDraggingVertical, setIsDraggingVertical] = useState(false);
+  
+  // Dark mode state
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem("vibego:darkMode");
+    if (saved !== null) return saved === "true";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
 
   // PC 端三块区域折叠状态（仅桌面端生效）
   const [panelExplorerCollapsed, setPanelExplorerCollapsed] = useState(false);
@@ -337,6 +344,16 @@ export function App() {
   const fileListRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
+
+  // Dark mode effect
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", isDarkMode ? "dark" : "light");
+    localStorage.setItem("vibego:darkMode", String(isDarkMode));
+  }, [isDarkMode]);
+
+  const toggleDarkMode = useCallback(() => {
+    setIsDarkMode((prev) => !prev);
+  }, []);
 
   // Auto-hide status toast after 3 seconds
   useEffect(() => {
@@ -1370,6 +1387,25 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFile, fileText]);
 
+  // Update terminal theme when dark mode changes
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = isDarkMode
+      ? {
+          background: "#1e293b",
+          foreground: "#f1f5f9",
+          cursor: "#3b82f6",
+          selectionBackground: "rgba(59,130,246,0.3)",
+        }
+      : {
+          background: "#ffffff",
+          foreground: "#0f172a",
+          cursor: "#2563eb",
+          selectionBackground: "rgba(37,99,235,0.18)",
+        };
+  }, [isDarkMode]);
+
   // Terminal init: only when a mode that shows the terminal (Codex/Claude/OpenCode/Restricted/cursor-cli).
   // In Cursor mode we don't create the terminal so xterm is never opened in a 0x0 hidden container.
   useEffect(() => {
@@ -1383,12 +1419,19 @@ export function App() {
       fontFamily: "var(--mono)",
       fontSize: 12,
       allowProposedApi: true,
-      theme: {
-        background: "#ffffff",
-        foreground: "#0f172a",
-        cursor: "#2563eb",
-        selectionBackground: "rgba(37,99,235,0.18)",
-      },
+      theme: isDarkMode
+        ? {
+            background: "#1e293b",
+            foreground: "#f1f5f9",
+            cursor: "#3b82f6",
+            selectionBackground: "rgba(59,130,246,0.3)",
+          }
+        : {
+            background: "#ffffff",
+            foreground: "#0f172a",
+            cursor: "#2563eb",
+            selectionBackground: "rgba(37,99,235,0.18)",
+          },
       cursorBlink: true,
     });
     const fit = new FitAddon();
@@ -1877,7 +1920,7 @@ export function App() {
         >
           <div className="panelHeader" style={{ flexDirection: "column", alignItems: "stretch" }}>
             <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-              <h2>Files</h2>
+              {/* <h2>Files</h2> */}
               {!isMobile && panelExplorerCollapsed && (
                 <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
               )}
@@ -1886,6 +1929,15 @@ export function App() {
                 {/* <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)" }}>
                   安装指南
                 </a> */}
+                <button
+                  type="button"
+                  className="themeToggleBtn"
+                  onClick={toggleDarkMode}
+                  title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+                  aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+                >
+                  {isDarkMode ? "☀️" : "🌙"}
+                </button>
                 <select
                     className="select"
                     value={activeRoot}
@@ -2112,7 +2164,7 @@ export function App() {
                         [activeFile]: { text: next, dirty: true, info: prev[activeFile]?.info ?? null },
                       }));
                     }}
-                    theme="vs"
+                    theme={isDarkMode ? "vs-dark" : "vs"}
                     options={{
                       fontFamily: "var(--mono)",
                       fontSize: 12,
@@ -2421,6 +2473,15 @@ export function App() {
               {activeWorkspace ? activeWorkspace.name : activeRoot ? baseName(activeRoot) : ""}
             
             </span>
+            <button
+              type="button"
+              className="themeToggleBtn"
+              onClick={toggleDarkMode}
+              title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+              aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+            >
+              {isDarkMode ? "☀️" : "🌙"}
+            </button>
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
                 文件夹

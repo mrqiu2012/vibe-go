@@ -13,6 +13,19 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
+/* Dark mode */
+:root[data-theme="dark"] {
+  --bg: #0f172a;
+  --panel: #1e293b;
+  --panel2: #334155;
+  --border: #475569;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
 html,
 body {
   height: 100%;
@@ -372,7 +385,7 @@ input {
   min-width: 0;
   overflow: auto;
   padding: 12px;
-  background: #ffffff;
+  background: var(--panel);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1378,7 +1391,7 @@ input {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: #ffffff;
+  background: var(--panel);
   border-radius: 0 0 12px 12px;
   overflow: hidden;
 }
@@ -1406,7 +1419,7 @@ input {
   font-size: 11px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--panel);
   color: var(--text);
   cursor: pointer;
   min-width: 70px;
@@ -1418,7 +1431,7 @@ input {
   font-size: 11px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--panel);
   color: var(--text);
   cursor: pointer;
   min-width: 90px;
@@ -1485,7 +1498,7 @@ input {
   min-height: 0;
   overflow: auto;
   padding: 16px;
-  background: #fafbfc;
+  background: var(--bg);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1546,7 +1559,7 @@ input {
 }
 
 .message.assistant .messageContent {
-  background: #ffffff;
+  background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -1671,7 +1684,7 @@ input {
   font-family: inherit;
   font-size: 13px;
   resize: none;
-  background: #ffffff;
+  background: var(--panel);
   color: var(--text);
   line-height: 1;
 }
@@ -1684,7 +1697,7 @@ input {
 .chatInput textarea:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  background: #f8fafc;
+  background: var(--panel2);
 }
 
 .sendBtn {
@@ -1767,7 +1780,7 @@ input {
 
 /* Chat History Panel：与下方对话框区域等高，共享剩余空间 */
 .chatHistoryPanel {
-  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex: 1;
   min-height: 0;
@@ -1775,7 +1788,7 @@ input {
   flex-direction: column;
   overflow: hidden;
   animation: slideDown 0.2s ease-out;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 @keyframes slideDown {
@@ -1795,7 +1808,7 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--panel);
   backdrop-filter: blur(8px);
   font-weight: 600;
   font-size: 13px;
@@ -1819,8 +1832,8 @@ input {
 }
 
 .closeHistoryBtn:hover {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.3);
   color: #dc2626;
 }
 
@@ -1863,7 +1876,7 @@ input {
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--panel);
   cursor: pointer;
   position: relative;
   transition: all 180ms ease;
@@ -1873,10 +1886,10 @@ input {
 }
 
 .historyItem:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: var(--panel2);
+  border-color: var(--border);
   transform: translateX(2px);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .historyItemActive {
@@ -1954,8 +1967,8 @@ input {
 }
 
 .historyItemDelete:hover {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.3);
   color: #dc2626;
 }
 
@@ -2277,8 +2290,8 @@ input {
 .setupCode {
   margin: 10px 0;
   padding: 14px 16px;
-  background: #1e293b;
-  color: #e2e8f0;
+  background: var(--panel2);
+  color: var(--text);
   border-radius: 8px;
   overflow-x: auto;
   font-family: var(--mono);
@@ -2604,4 +2617,34 @@ input {
 
 .setupLink:hover {
   color: var(--accent);
+}
+
+/* Dark mode toggle button */
+.themeToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 200ms ease-out, border-color 200ms ease-out;
+}
+
+.themeToggleBtn:hover {
+  background: var(--panel2);
+  border-color: var(--accent);
+}
+
+.themeToggleBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
