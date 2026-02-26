@@ -273,7 +273,10 @@ export function CursorChatPanel({
   const [showHistory, setShowHistory] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("auto");
   const [headerPortalReady, setHeaderPortalReady] = useState(false);
+  const [pendingQuestions, setPendingQuestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const doSendRef = useRef<(text: string) => void>(() => {});
+  const loadingPrevRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
   const assistantIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string>("");
@@ -507,169 +510,201 @@ export function CursorChatPanel({
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [cwd]);
 
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
+  const doSend = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
 
-    let sessionId = currentSessionId;
-    if (!sessionId) {
-      sessionId = randomId();
-      const newSession: ChatSession = {
-        id: sessionId,
-        cwd,
-        title: "新对话",
-        messages: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      setCurrentSessionId(sessionId);
-      setChatId(sessionId);
-      setSessions((prev) => [newSession, ...prev]);
-      createSessionApi(newSession);
-    }
-
-    const userMsg: Message = {
-      id: randomId(),
-      role: "user",
-      content: input.trim(),
-      timestamp: Date.now(),
-    };
-    const assistantId = randomId();
-    const assistantMsg: Message = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      timestamp: Date.now(),
-    };
-    const newMessages = [...messages, userMsg, assistantMsg];
-    setMessages(newMessages);
-    setInput("");
-    setLoading(true);
-
-    stopRequestedRef.current = false;
-    runIdRef.current = null;
-    assistantIdRef.current = assistantId;
-    sessionIdRef.current = sessionId;
-    streamDeadRef.current = false;
-    handlerRef.current = buildStreamHandler(assistantId, setMessages, (sid) => setChatId(sid));
-
-    const ac = new AbortController();
-    abortControllerRef.current = ac;
-
-    try {
-      const resume = chatId || undefined;
-      const resp = await fetch(apiUrl("/api/cursor-agent/stream"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: userMsg.content,
-          mode,
+      let sessionId = currentSessionId;
+      if (!sessionId) {
+        sessionId = randomId();
+        const newSession: ChatSession = {
+          id: sessionId,
           cwd,
-          force: true,
-          resume,
-          model: selectedModel || "auto",
-        }),
-        signal: ac.signal,
-      });
-
-      if (!resp.ok) {
-        if (ac.signal.aborted) return;
-        let errText = `请求失败 (${resp.status})`;
-        try {
-          const j = await resp.json();
-          if (j?.error) errText = String(j.error);
-        } catch {}
-        throw new Error(errText);
+          title: "新对话",
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        setCurrentSessionId(sessionId);
+        setChatId(sessionId);
+        setSessions((prev) => [newSession, ...prev]);
+        createSessionApi(newSession);
       }
 
-      const runId = resp.headers.get("X-Run-Id")?.trim();
-      if (!runId) throw new Error("服务端未返回 X-Run-Id");
+      const userMsg: Message = {
+        id: randomId(),
+        role: "user",
+        content: text.trim(),
+        timestamp: Date.now(),
+      };
+      const assistantId = randomId();
+      const assistantMsg: Message = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+      };
+      const newMessages = [...messages, userMsg, assistantMsg];
+      setMessages(newMessages);
+      setLoading(true);
 
-      runIdRef.current = runId;
-      saveStoredRun(cwd, sessionId, runId, assistantId, 0);
+      stopRequestedRef.current = false;
+      runIdRef.current = null;
+      assistantIdRef.current = assistantId;
+      sessionIdRef.current = sessionId;
+      streamDeadRef.current = false;
+      handlerRef.current = buildStreamHandler(assistantId, setMessages, (sid) => setChatId(sid));
 
-      const reader = resp.body?.getReader();
-      if (!reader) throw new Error("无响应体");
+      const ac = new AbortController();
+      abortControllerRef.current = ac;
 
-      const decoder = new TextDecoder();
-      let buf = "";
       try {
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (ac.signal.aborted || stopRequestedRef.current) break;
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          const handler = handlerRef.current;
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            if (handler) {
-              try {
-                handler.handleEvent(JSON.parse(trimmed));
-              } catch {
-                handler.appendMetaLine(trimmed);
+        const resume = chatId || undefined;
+        const resp = await fetch(apiUrl("/api/cursor-agent/stream"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: userMsg.content,
+            mode,
+            cwd,
+            force: true,
+            resume,
+            model: selectedModel || "auto",
+          }),
+          signal: ac.signal,
+        });
+
+        if (!resp.ok) {
+          if (ac.signal.aborted) return;
+          let errText = `请求失败 (${resp.status})`;
+          try {
+            const j = await resp.json();
+            if (j?.error) errText = String(j.error);
+          } catch {}
+          throw new Error(errText);
+        }
+
+        const runId = resp.headers.get("X-Run-Id")?.trim();
+        if (!runId) throw new Error("服务端未返回 X-Run-Id");
+
+        runIdRef.current = runId;
+        saveStoredRun(cwd, sessionId, runId, assistantId, 0);
+
+        const reader = resp.body?.getReader();
+        if (!reader) throw new Error("无响应体");
+
+        const decoder = new TextDecoder();
+        let buf = "";
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (ac.signal.aborted || stopRequestedRef.current) break;
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            const handler = handlerRef.current;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              if (handler) {
+                try {
+                  handler.handleEvent(JSON.parse(trimmed));
+                } catch {
+                  handler.appendMetaLine(trimmed);
+                }
               }
             }
           }
-        }
-        if (buf.trim() && handlerRef.current && !ac.signal.aborted) {
-          try {
-            handlerRef.current.handleEvent(JSON.parse(buf.trim()));
-          } catch {
-            handlerRef.current.appendMetaLine(buf.trim());
+          if (buf.trim() && handlerRef.current && !ac.signal.aborted) {
+            try {
+              handlerRef.current.handleEvent(JSON.parse(buf.trim()));
+            } catch {
+              handlerRef.current.appendMetaLine(buf.trim());
+            }
+          }
+
+          if (ac.signal.aborted || stopRequestedRef.current) {
+            streamDeadRef.current = true;
+            clearStoredRun();
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            handlerRef.current = null;
+          } else {
+            clearStoredRun();
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            handlerRef.current = null;
+          }
+        } catch (readErr: any) {
+          if (ac.signal.aborted || stopRequestedRef.current) {
+            streamDeadRef.current = true;
+            clearStoredRun();
+            setLoading(false);
+            runIdRef.current = null;
+            assistantIdRef.current = null;
+            handlerRef.current = null;
+          } else {
+            streamDeadRef.current = true;
+            setMessages((prev) =>
+              updateMessageById(prev, assistantId, {
+                content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n[连接断开，回到前台将自动重连]`,
+              }),
+            );
           }
         }
+      } catch (e: any) {
+        if (ac.signal.aborted || stopRequestedRef.current) {
+          streamDeadRef.current = true;
+          return;
+        }
+        clearStoredRun();
+        setMessages((prev) =>
+          updateMessageById(prev, assistantId, {
+            content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n错误: ${e?.message ?? String(e)}`,
+          }),
+        );
+        setLoading(false);
+        runIdRef.current = null;
+        assistantIdRef.current = null;
+        handlerRef.current = null;
+      } finally {
+        abortControllerRef.current = null;
+      }
+    },
+    [currentSessionId, messages, cwd, mode, chatId, selectedModel],
+  );
 
-        if (ac.signal.aborted || stopRequestedRef.current) {
-          streamDeadRef.current = true;
-          clearStoredRun();
-          setLoading(false);
-          runIdRef.current = null;
-          assistantIdRef.current = null;
-          handlerRef.current = null;
-        } else {
-          clearStoredRun();
-          setLoading(false);
-          runIdRef.current = null;
-          assistantIdRef.current = null;
-          handlerRef.current = null;
-        }
-      } catch (readErr: any) {
-        if (ac.signal.aborted || stopRequestedRef.current) {
-          streamDeadRef.current = true;
-          clearStoredRun();
-          setLoading(false);
-          runIdRef.current = null;
-          assistantIdRef.current = null;
-          handlerRef.current = null;
-        } else {
-          streamDeadRef.current = true;
-          setMessages((prev) =>
-            updateMessageById(prev, assistantId, {
-              content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n[连接断开，回到前台将自动重连]`,
-            }),
-          );
-        }
+  useEffect(() => {
+    doSendRef.current = doSend;
+  }, [doSend]);
+
+  // 当 loading 从 true 变为 false 时，若有待发送问题则按顺序自动发送第一条
+  useEffect(() => {
+    if (loadingPrevRef.current && !loading && pendingQuestions.length > 0) {
+      const [first, ...rest] = pendingQuestions;
+      const q = first.trim();
+      if (q) {
+        setPendingQuestions(rest);
+        doSendRef.current(q);
+      } else {
+        setPendingQuestions(rest);
       }
-    } catch (e: any) {
-      if (ac.signal.aborted || stopRequestedRef.current) {
-        streamDeadRef.current = true;
-        return;
-      }
-      clearStoredRun();
-      setMessages((prev) =>
-        updateMessageById(prev, assistantId, {
-          content: (prev.find((m) => m.id === assistantId)?.content || "") + `\n错误: ${e?.message ?? String(e)}`,
-        }),
-      );
-      setLoading(false);
-      runIdRef.current = null;
-      assistantIdRef.current = null;
-      handlerRef.current = null;
-    } finally {
-      abortControllerRef.current = null;
     }
+    loadingPrevRef.current = loading;
+  }, [loading, pendingQuestions]);
+
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    if (loading) {
+      setPendingQuestions((prev) => [...prev, input.trim()]);
+      setInput("");
+      return;
+    }
+    doSend(input.trim());
+    setInput("");
   };
 
   const handleNewChat = () => {
@@ -689,6 +724,7 @@ export function CursorChatPanel({
     setChatId("");
     setMessages([]);
     setInput("");
+    setPendingQuestions([]);
     setShowHistory(false);
   };
 
@@ -708,6 +744,7 @@ export function CursorChatPanel({
     setCurrentSessionId(session.id);
     setChatId(session.id);
     setMessages(session.messages);
+    setPendingQuestions([]);
     setShowHistory(false);
   };
 
@@ -885,16 +922,32 @@ export function CursorChatPanel({
         </div>
       )}
 
+      {pendingQuestions.length > 0 ? (
+        <div className="pendingQuestionsWrap">
+          {pendingQuestions.map((q, i) => (
+            <div key={i} className="pendingQuestionBar">
+              <pre className="pendingQuestionText">{q}</pre>
+              <button
+                type="button"
+                className="pendingQuestionCancel"
+                onClick={() => setPendingQuestions((prev) => prev.filter((_, j) => j !== i))}
+                title="取消待发送"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="chatInput">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={`向 ${mode} 提问...（Ctrl/Cmd+Enter 发送）`}
-          disabled={loading}
           rows={3}
         />
-        <button className="sendBtn" onClick={handleSend} disabled={loading || !input.trim()}>
+        <button className="sendBtn" onClick={handleSend} disabled={!input.trim()}>
           发送
         </button>
       </div>
