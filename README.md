@@ -1,24 +1,24 @@
 # VibeGo
 
 **中文**  
-VibeGo 是一款本机两段式 Web IDE：目录树 + 文件编辑器 + 受限终端，并集成 Cursor CLI（`agent`）、Codex CLI、Claude Code CLI（`claude`）与 OpenCode CLI（`opencode`）。
+VibeGo 是一款本机两段式 Web IDE：目录树 + 文件编辑器 + 受限终端，并集成 Cursor CLI（`agent`）、Codex CLI、Claude Code CLI（`claude`）、OpenCode CLI（`opencode`）与 Kimi CLI（`kimi`）。
 
 **English**  
-VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, with Cursor CLI (`agent`), Codex CLI, Claude Code CLI (`claude`), and OpenCode CLI (`opencode`) integration.
+VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, with Cursor CLI (`agent`), Codex CLI, Claude Code CLI (`claude`), OpenCode CLI (`opencode`), and Kimi CLI (`kimi`) integration.
 
 ---
 
 **中文 | 主要特性**
 
 - 本地目录树与文件编辑器
-- 受限终端（Restricted / Codex / Claude / OpenCode / Cursor 模式）
+- 受限终端（Restricted / Codex / Claude / OpenCode / Kimi / Cursor 模式）
 - 前后端分离，开发态端口清晰
 - Windows 兼容（CLI 路径查找、PTY 行为优化）
 
 **English | Highlights**
 
 - Local file tree and editor
-- Restricted terminal modes (Restricted / Codex / Claude / OpenCode / Cursor)
+- Restricted terminal modes (Restricted / Codex / Claude / OpenCode / Kimi / Cursor)
 - Clear dev ports with separated frontend/backend
 - Windows-friendly CLI path handling and PTY behavior
 
@@ -79,6 +79,19 @@ Windows 路径示例：`E:\\test`。
 ```bash
 VITE_API_BASE="http://<server-ip>:3990" pnpm dev
 ```
+
+**远程使用（Remote Vibe Coding）**  
+在电脑上启动 VibeGo 后，可用 [Tailscale](https://tailscale.com) 等组网工具，从手机或另一台设备访问本机服务，实现远程编程（vibe coding）。
+
+1. 在本机安装并登录 Tailscale，记下本机的 Tailscale IP（如 `100.x.x.x`）。
+2. 本机运行 `pnpm dev`，确保终端里显示的端口（如 3990、5173）可被本机访问。
+3. 在手机（或另一台已加入同一 Tailscale 网络的设备）上安装 Tailscale，浏览器访问：  
+   `http://<本机-Tailscale-IP>:5173`（前端）  
+   若前后端同一端口或已反向代理，则访问该端口即可。
+4. 前端会请求后端 API；若前后端分离，需让前端指向后端地址，例如在启动时设置：  
+   `VITE_API_BASE="http://<本机-Tailscale-IP>:3990"` 再 `pnpm dev`，这样手机打开 5173 时就会连到本机的 3990。
+
+这样即可在手机或平板上用 Cursor 聊天、看代码、发指令，在本机执行，实现远程 vibe coding。
 
 5. 安装 CLI（可选但推荐）
 
@@ -321,7 +334,7 @@ You can skip DB initialization to enter the app, but chat/workspace features may
 
 - `agent` 首次运行需信任 Workspace（弹窗按 `a` 选择 Trust）
 - Windows 下启动建议使用前台命令（不要后台 Start-Process），否则 PTY 可能不可用
-- `agent`/`rg`/`codex`/`claude`/`opencode` 找不到时，先检查 PATH，Windows 用 `where.exe` 验证  
+- `agent`/`rg`/`codex`/`claude`/`opencode`/`kimi` 找不到时，先检查 PATH，Windows 用 `where.exe` 验证  
   常见位置：`%LOCALAPPDATA%\\cursor-agent\\agent.cmd`，`%APPDATA%\\npm\\codex.cmd`
 
 Ripgrep 推荐通过 winget 安装：
@@ -348,7 +361,7 @@ if ($rgDir -and ($userPath -notlike "*$rgDir*")) {
 - First run of `agent` requires Workspace Trust (press `a`)
 - Start in a foreground terminal (avoid background Start-Process), or PTY may fail
 - If `agent`/`rg`/`codex`/`claude`/`opencode` is not found, check PATH via `where.exe`  
-  Common locations: `%LOCALAPPDATA%\\cursor-agent\\agent.cmd`, `%APPDATA%\\npm\\codex.cmd`
+  Common locations: `%LOCALAPPDATA%\\cursor-agent\\agent.cmd`, `%APPDATA%\\npm\\codex.cmd`, `~/.local/bin/kimi`
 
 Install ripgrep with winget:
 
@@ -376,14 +389,14 @@ if ($rgDir -and ($userPath -notlike "*$rgDir*")) {
 - 3990 连接失败：后端未启动或崩溃，先运行 `pnpm dev:server`
 - 500 且后端已启动：查看后端日志，db 加载失败会返回 503
 - 3989/3990 被占用：运行 `pnpm dev:fresh`
-- 找不到 `agent`/`rg`/`codex`/`claude`/`opencode`：检查 PATH，Windows 用 `where.exe`
+- 找不到 `agent`/`rg`/`codex`/`claude`/`opencode`/`kimi`：检查 PATH，Windows 用 `where.exe`
 
 **English | Troubleshooting**
 
 - 3990 connection refused: backend not running, try `pnpm dev:server`
 - 500 with backend up: check server logs; DB load failure returns 503
 - Ports 3989/3990 in use: run `pnpm dev:fresh`
-- `agent`/`rg`/`codex`/`claude`/`opencode` not found: check PATH, use `where.exe` on Windows
+- `agent`/`rg`/`codex`/`claude`/`opencode`/`kimi` not found: check PATH, use `where.exe` on Windows
 
 ---
 

@@ -38,6 +38,10 @@ const server = spawn("pnpm", ["--filter", "@vibego/server", "dev"], {
   cwd: ROOT,
   stdio: "inherit",
   shell: true,
+  env: {
+    ...process.env,
+    PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || ""}`,
+  },
 });
 
 server.on("error", (err) => {

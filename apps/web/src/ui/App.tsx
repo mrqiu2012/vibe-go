@@ -341,6 +341,7 @@ export function App() {
   const autoExpandSeqRef = useRef(0);
   const autoExpandRequestRef = useRef<{ id: number; root: string; path: string } | null>(null);
   const userCollapsedByRootRef = useRef<Map<string, Set<string>>>(new Map());
+  const suppressExplorerAutoScrollUntilRef = useRef(0);
   const fileListRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
@@ -400,13 +401,13 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
-  const termSessionModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "native" | "">("");
+  const termSessionModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "native" | "">("");
   const termSessionIsPtyRef = useRef(false);
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
   // Buffer term.data that arrives before term.open.resp (sessionId not set yet) so we don't drop initial output
   const termPendingDataBufferRef = useRef<Map<string, string[]>>(new Map());
-  const [termMode, setTermMode] = useState<"restricted" | "codex" | "claude" | "opencode" | "cursor" | "cursor-cli">("cursor");
-  const termModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "cursor" | "cursor-cli">("cursor");
+  const [termMode, setTermMode] = useState<"restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor" | "cursor-cli">("cursor");
+  const termModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor" | "cursor-cli">("cursor");
   const [restrictedNonce, setRestrictedNonce] = useState(0);
   const [cursorMode, setCursorMode] = useState<"agent" | "plan" | "ask">("agent");
   const cursorModeRef = useRef<"agent" | "plan" | "ask">("agent");
@@ -482,7 +483,7 @@ export function App() {
     }
 
     void client.stdin(sid, data).catch((e) => {
-      if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "cursor-cli") {
+      if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli") {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
       } else {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
@@ -1128,9 +1129,13 @@ export function App() {
         expandingTreeRef.current = false;
         lastSyncedExplorerRootRef.current = rootToSync;
         lastSyncedExplorerPathRef.current = pathToSync;
-        setTimeout(() => {
-          scrollToTerminalCwd();
-        }, 50);
+        if (Date.now() >= suppressExplorerAutoScrollUntilRef.current) {
+          setTimeout(() => {
+            if (Date.now() >= suppressExplorerAutoScrollUntilRef.current) {
+              scrollToTerminalCwd();
+            }
+          }, 50);
+        }
       }
     };
 
@@ -1138,11 +1143,15 @@ export function App() {
   }, [activeRoot, explorerTargetPath, scrollToTerminalCwd, tree]);
 
   useEffect(() => {
+    if (Date.now() < suppressExplorerAutoScrollUntilRef.current) return;
     const id = requestAnimationFrame(() => {
+      if (Date.now() < suppressExplorerAutoScrollUntilRef.current) return;
       const ok = scrollToTerminalCwd();
       if (!ok) {
         setTimeout(() => {
-          scrollToTerminalCwd();
+          if (Date.now() >= suppressExplorerAutoScrollUntilRef.current) {
+            scrollToTerminalCwd();
+          }
         }, 80);
       }
     });
@@ -1182,6 +1191,7 @@ export function App() {
   }, [activeRoot, activeFile, openTabs.length]);
 
   const toggleDir = async (node: TreeNode) => {
+    suppressExplorerAutoScrollUntilRef.current = Date.now() + 1000;
     setExplorerUserPath(node.path);
     // Collapse
     if (node.expanded) {
@@ -1549,8 +1559,8 @@ export function App() {
             }
           }
         } else {
-          // Buffer for Codex/Claude/OpenCode/Cursor CLI in case output arrives before open.resp.
-          if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "cursor-cli") {
+          // Buffer for Codex/Claude/OpenCode/Kimi/Cursor CLI in case output arrives before open.resp.
+          if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli") {
             if (!termPendingDataBufferRef.current.has(sid)) termPendingDataBufferRef.current.set(sid, []);
             termPendingDataBufferRef.current.get(sid)!.push(m.data);
           }
@@ -1579,6 +1589,12 @@ export function App() {
           termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[opencode 已退出 ${m.code ?? "?"}]\r\n`);
+        } else if (sessionMode === "kimi") {
+          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
+          cursorPromptNudgedRef.current = false;
+          term.write(`\r\n[kimi 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (
           sessionMode === "cursor-cli-agent" ||
           sessionMode === "cursor-cli-plan" ||
@@ -1745,6 +1761,7 @@ export function App() {
           | "codex"
           | "claude"
           | "opencode"
+          | "kimi"
           | "cursor-cli-agent"
           | "cursor-cli-plan"
           | "cursor-cli-ask";
@@ -1758,8 +1775,8 @@ export function App() {
         }
         logTerm("actualMode", { actualMode });
         
-        // Reset terminal when switching into codex/claude/opencode/cursor-cli/restricted to avoid mixing outputs.
-        if (termMode === "codex" || termMode === "claude" || termMode === "opencode" || termMode === "cursor-cli" || termMode === "restricted") {
+        // Reset terminal when switching into codex/claude/opencode/kimi/cursor-cli/restricted to avoid mixing outputs.
+        if (termMode === "codex" || termMode === "claude" || termMode === "opencode" || termMode === "kimi" || termMode === "cursor-cli" || termMode === "restricted") {
           term.reset();
         } else {
           term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
@@ -1773,6 +1790,7 @@ export function App() {
           actualMode === "codex" ||
           actualMode === "claude" ||
           actualMode === "opencode" ||
+          actualMode === "kimi" ||
           actualMode === "cursor-cli-agent" ||
           actualMode === "cursor-cli-plan" ||
           actualMode === "cursor-cli-ask" ||
@@ -1842,7 +1860,7 @@ export function App() {
           await client.stdin(resp.sessionId, pending).catch(() => {});
         }
 
-        if (!isPtySession && termMode !== "codex" && termMode !== "claude" && termMode !== "opencode" && termMode !== "cursor-cli") term.write("$ ");
+        if (!isPtySession && termMode !== "codex" && termMode !== "claude" && termMode !== "opencode" && termMode !== "kimi" && termMode !== "cursor-cli") term.write("$ ");
       } catch (e: any) {
         lastOpenKeyRef.current = "";
           setStatus(`[错误] 终端: ${e?.message ?? String(e)}`);
@@ -2208,7 +2226,7 @@ export function App() {
                 ? undefined
                 : panelTerminalCollapsed
                   ? collapsedPanelWidth
-                  : termMode === "cursor-cli" || termMode === "claude" || termMode === "opencode"
+                  : termMode === "cursor-cli" || termMode === "claude" || termMode === "opencode" || termMode === "kimi"
                     ? 520
                     : 0,
               minHeight: isMobile ? "65dvh" : undefined,
@@ -2298,6 +2316,13 @@ export function App() {
                     setTimeout(() => termRef.current?.focus(), 50);
                   }}>
                     OpenCode
+                  </button>
+                  <button className={"segBtn" + (termMode === "kimi" ? " segBtnActive" : "")} onClick={() => {
+                    setTermMode("kimi");
+                    termRef.current?.focus();
+                    setTimeout(() => termRef.current?.focus(), 50);
+                  }}>
+                    Kimi
                   </button>
                   <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => {
                     setTermMode("cursor-cli");
@@ -2634,6 +2659,9 @@ export function App() {
                   </button>
                   <button className={"segBtn" + (termMode === "opencode" ? " segBtnActive" : "")} onClick={() => setTermMode("opencode")}>
                     OpenCode
+                  </button>
+                  <button className={"segBtn" + (termMode === "kimi" ? " segBtnActive" : "")} onClick={() => setTermMode("kimi")}>
+                    Kimi
                   </button>
                   <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => setTermMode("cursor-cli")}>
                     Cursor CLI
