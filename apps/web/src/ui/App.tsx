@@ -258,14 +258,25 @@ function TreeView(props: {
       <div
         className={"fileRow" + (isActive ? " fileRowActive" : "")}
         data-path={node.path}
-        onClick={() => {
-          if (node.type === "dir") props.onToggleDir(node);
-          else if (node.type === "file") props.onOpenFile(node);
-        }}
         title={node.path}
       >
-        <div className="fileRowLeft">
-          <span className="fileCaret" style={{ color: node.type === "dir" ? "var(--accent)" : "var(--text)" }}>
+        <div 
+          className="fileRowLeft"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (node.type === "dir") props.onToggleDir(node);
+            else if (node.type === "file") props.onOpenFile(node);
+          }}
+          style={{ flex: 1, cursor: "pointer" }}
+        >
+          <span 
+            className="fileCaret" 
+            style={{ color: node.type === "dir" ? "var(--accent)" : "var(--text)" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (node.type === "dir") props.onToggleDir(node);
+            }}
+          >
             {node.type === "dir" ? (node.expanded ? "▾" : "▸") : " "}
           </span>
           <span className="fileName">{node.name}</span>
@@ -291,7 +302,14 @@ function TreeView(props: {
             ) : null}
           </div>
           {node.type === "dir" ? (
-            <button className="dirTermBtn" onClick={() => props.onOpenTerminalDir(node)} title="在此文件夹打开终端">
+            <button 
+              className="dirTermBtn" 
+              onClick={() => {
+                props.onOpenTerminalDir(node);
+                props.onToggleDir(node);
+              }} 
+              title="在此文件夹打开终端"
+            >
               Go
             </button>
           ) : null}
@@ -1074,6 +1092,8 @@ export function App() {
   const [roots, setRoots] = useState<string[]>([]);
   const [activeRoot, setActiveRoot] = useState("");
   const [tree, setTree] = useState<TreeNode | null>(null);
+  // 跟踪非激活根目录的展开状态和子目录数据
+  const [inactiveRootData, setInactiveRootData] = useState<Map<string, TreeNode>>(new Map());
   const treeRef = useRef<TreeNode | null>(null);
   const expandingTreeRef = useRef(false);
   const lastSyncedExplorerRootRef = useRef<string>("");
@@ -1979,7 +1999,7 @@ export function App() {
     if (mobileTab === "editor") setMobileTab("terminal");
   }, [hasEditorContent, isMobile, mobileTab]);
 
-  const toggleDir = async (node: TreeNode) => {
+  const toggleDir = useCallback(async (node: TreeNode) => {
     suppressExplorerAutoScrollUntilRef.current = Date.now() + 1000;
     setExplorerUserPath(node.path);
     // Collapse
@@ -2015,15 +2035,65 @@ export function App() {
       setStatus(`[error] list: ${e?.message ?? String(e)}`);
       setTree((prev) => (prev ? updateNode(prev, node.path, (n) => ({ ...n, loading: false })) : prev));
     }
-  };
+  }, []);
 
   const toggleExplorerDir = useCallback(async (node: TreeNode) => {
+    // 点击文件夹名只展开/折叠，不切换根目录
+    // 如果是非激活的根目录，加载子目录并展开
     if (roots.includes(node.path) && node.path !== activeRoot) {
-      activateRoot(node.path);
+      const isExpanded = inactiveRootData.has(node.path) && inactiveRootData.get(node.path)!.expanded;
+      
+      if (isExpanded) {
+        // 折叠
+        setInactiveRootData((prev) => {
+          const next = new Map(prev);
+          const data = next.get(node.path);
+          if (data) {
+            next.set(node.path, { ...data, expanded: false });
+          }
+          return next;
+        });
+      } else {
+        // 展开：如果还没有加载数据，先加载
+        if (!inactiveRootData.has(node.path)) {
+          try {
+            const r = await apiList(node.path);
+            const children: TreeNode[] = r.entries.map((e: FsEntry) => ({
+              path: joinPath(r.path, e.name),
+              name: e.name,
+              type: e.type,
+            }));
+            setInactiveRootData((prev) => {
+              const next = new Map(prev);
+              next.set(node.path, {
+                path: node.path,
+                name: baseName(node.path),
+                type: "dir",
+                expanded: true,
+                loaded: true,
+                children,
+              });
+              return next;
+            });
+          } catch (e: any) {
+            setStatus(`[error] list: ${e?.message ?? String(e)}`);
+          }
+        } else {
+          // 已加载过，直接展开
+          setInactiveRootData((prev) => {
+            const next = new Map(prev);
+            const data = next.get(node.path);
+            if (data) {
+              next.set(node.path, { ...data, expanded: true });
+            }
+            return next;
+          });
+        }
+      }
       return;
     }
     await toggleDir(node);
-  }, [activeRoot, activateRoot, roots]);
+  }, [toggleDir, roots, activeRoot, inactiveRootData]);
 
   const openFile = async (node: TreeNode) => {
     try {
@@ -2807,10 +2877,17 @@ export function App() {
             }}>
               {roots.length > 0 ? (
                 roots.map((root) => {
+                  const isInactiveRoot = root !== activeRoot;
                   const node: TreeNode =
-                    root === activeRoot && tree
+                    !isInactiveRoot && tree
                       ? tree
-                      : { path: root, name: baseName(root), type: "dir", expanded: false };
+                      : (inactiveRootData.get(root) ?? { 
+                          path: root, 
+                          name: baseName(root), 
+                          type: "dir", 
+                          expanded: false,
+                          loaded: false,
+                        });
                   return (
                     <TreeView
                       key={root}
@@ -3263,33 +3340,13 @@ export function App() {
             >
               <span aria-hidden>{mobileWorkspaceDrawerOpen ? "✕" : "≡"}</span>
             </button>
-            <span className="mobileTopbarProjectName" title={terminalCwd || activeWorkspace?.cwd || activeRoot}>
-              {activeWorkspace ? activeWorkspace.name : activeRoot ? baseName(activeRoot) : ""}
-            
-            </span>
-            <button
-              type="button"
-              className="btn"
-              onClick={toggleDarkMode}
-              title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
-              aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
-            >
-              <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ color: isDarkMode ? "#f59e0b" : "#64748b" }}></i>
-            </button>
-            <div className="tabs">
-              <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
-                文件夹
-              </button>
-              <button
-                className={"tabBtn" + (mobileTab === "editor" ? " tabBtnActive" : "")}
-                onClick={() => setMobileTab("editor")}
-                disabled={!hasEditorContent}
-              >
-                编辑器
-              </button>
-              <button className={"tabBtn" + (mobileTab === "terminal" ? " tabBtnActive" : "")} onClick={() => setMobileTab("terminal")}>
-                终端
-              </button>
+            <div className="mobileTopbarInfo">
+              <span className="mobileTopbarProjectName" title={terminalCwd || activeWorkspace?.cwd || activeRoot}>
+                {activeWorkspace ? activeWorkspace.name : activeRoot ? baseName(activeRoot) : ""}
+              </span>
+              <span className="mobileTopbarCwd" title={terminalCwd || activeWorkspace?.cwd || activeRoot}>
+                {terminalCwd || activeWorkspace?.cwd || activeRoot}
+              </span>
             </div>
           </div>
 
@@ -3603,101 +3660,141 @@ export function App() {
             }}
             aria-hidden
           />
+          {/* 移动端 panel - 完全复刻PC端panel结构 */}
           <div
-            className={"mobileWorkspaceDrawer" + (mobileWorkspaceDrawerOpen ? " mobileWorkspaceDrawerOpen" : "")}
+            className={"mobilePanel" + (mobileWorkspaceDrawerOpen ? " mobilePanelOpen" : "")}
             role="dialog"
             aria-modal="true"
-            aria-label="根目录与工作区"
+            aria-label="资源管理器"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mobileWorkspaceDrawerRootSection">
-              <label className="mobileWorkspaceDrawerRootLabel" htmlFor="mobileRootSelect">
-                根目录
-              </label>
-              {roots.length > 0 ? (
-                <select
-                  id="mobileRootSelect"
-                  className="select mobileWorkspaceDrawerRootSelect"
-                  value={activeRoot}
-                  onChange={(e) => activateRoot(e.target.value)}
-                  title="根目录"
-                >
-                  {roots.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="mobileWorkspaceDrawerRootHint">还没有文件目录</div>
-              )}
-              <div className="rootAddBar rootAddBarMobile">
-                <span className="rootAddHint">通过系统目录选择器添加目录</span>
+            {/* panelHeader - 移动端优化 */}
+            <div className="panelHeader" style={{ justifyContent: "space-between" }}>
+              <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
                 <button
                   type="button"
                   className="segBtn"
                   onClick={() => void handlePickRoot()}
+                  title="新增项目"
                   disabled={rootPickerLoading}
                 >
                   <i className="fas fa-plus" style={{ color: "#3b82f6" }}></i>
                 </button>
+                <button
+                  type="button"
+                  className="segBtn"
+                  onClick={createFolder}
+                  disabled={!activeRoot}
+                  title="新建文件夹"
+                >
+                  <i className="fas fa-folder-plus" style={{ color: "#10b981" }}></i>
+                </button>
+                <button
+                  type="button"
+                  className="segBtn"
+                  onClick={createFile}
+                  disabled={!activeRoot}
+                  title="新建文件"
+                >
+                  <i className="fas fa-file-circle-plus" style={{ color: "#06b6d4" }}></i>
+                </button>
               </div>
-            </div>
-            <div className="mobileWorkspaceDrawerHeader">
-              <h2 className="mobileWorkspaceDrawerTitle">工作区</h2>
+              {/* 关闭按钮 */}
               <button
                 type="button"
-                className="mobileWorkspaceDrawerClose"
+                className="mobilePanelCloseBtn"
                 onClick={() => {
                   setMobileWorkspaceDrawerOpen(false);
                   mobileSidebarToggleRef.current?.focus();
                 }}
+                title="关闭"
                 aria-label="关闭"
               >
-                ×
+                <i className="fas fa-times"></i>
               </button>
             </div>
-            <div className="mobileWorkspaceDrawerList">
-              {workspaces.length === 0 ? (
-                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
-              ) : (
-                workspaces.map((ws) => (
-                  <div
-                    key={ws.id}
-                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
-                    onClick={() => {
-                      switchWorkspace(ws.id);
-                      setMobileWorkspaceDrawerOpen(false);
-                    }}
-                    title={ws.cwd}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        switchWorkspace(ws.id);
-                        setMobileWorkspaceDrawerOpen(false);
-                      }
-                    }}
-                  >
-                    <div className="workspaceTabLabel">
-                      <span className="workspaceTabName">{ws.name}</span>
-                      <span className="workspaceTabCwd">{ws.cwd}</span>
+            
+            {/* panelBody - 完全复刻PC端 */}
+            <div className="panelBody">
+              <div className="fileList">
+                {roots.length > 0 ? (
+                  roots.map((root) => {
+                    const isInactiveRoot = root !== activeRoot;
+                    const node: TreeNode =
+                      !isInactiveRoot && tree
+                        ? tree
+                        : (inactiveRootData.get(root) ?? { 
+                            path: root, 
+                            name: baseName(root), 
+                            type: "dir", 
+                            expanded: false,
+                            loaded: false,
+                          });
+                    return (
+                      <TreeView
+                        key={root}
+                        node={node}
+                        depth={0}
+                        activeFile={activeFile}
+                        onToggleDir={toggleExplorerDir}
+                        onOpenFile={(node) => {
+                          openFile(node);
+                          setMobileWorkspaceDrawerOpen(false);
+                        }}
+                        onOpenTerminalDir={(n) => {
+                          addWorkspace(n.path);
+                        }}
+                      />
+                    );
+                  })
+                ) : null}
+                {!tree && roots.length === 0 ? (
+                  <div className="rootEmptyState">
+                    <div className="rootEmptyTitle">左侧先添加一个文件目录</div>
+                    <div className="rootEmptyHint">添加后，这里会显示目录树；终端和工作区也会基于该目录工作。</div>
+                    <div>
+                      <button
+                        type="button"
+                        className="segBtn"
+                        onClick={() => void handlePickRoot()}
+                        disabled={rootPickerLoading}
+                      >
+                        <i className="fas fa-plus" style={{ color: "#3b82f6" }}></i>
+                      </button>
                     </div>
-                    <button
-                      className="workspaceTabClose"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeWorkspace(ws.id);
-                        setMobileWorkspaceDrawerOpen(false);
-                      }}
-                      title="关闭工作区"
-                    >
-                      ×
-                    </button>
                   </div>
-                ))
-              )}
+                ) : !tree && roots.length > 0 ? (
+                  <div className="fileMeta">{ready ? "加载中…" : "无根目录"}</div>
+                ) : null}
+              </div>
+            </div>
+            
+            {/* panelSettings - 完全复刻PC端 */}
+            <div className="panelSettings">
+              <div className="panelSettingsRow">
+                <button
+                  type="button"
+                  className="btn panelSettingsBtn"
+                  onClick={() => {
+                    setAiSettingsOpen(true);
+                    setMobileWorkspaceDrawerOpen(false);
+                  }}
+                  title="设置"
+                >
+                  <i className="fas fa-cog" style={{ marginRight: 6, color: "#8b5cf6" }}></i>设置
+                </button>
+                <button
+                  type="button"
+                  className="btn panelSettingsBtn"
+                  onClick={toggleDarkMode}
+                  title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+                  aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+                >
+                  <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ marginRight: 6, color: isDarkMode ? "#f59e0b" : "#64748b" }}></i>
+                  {isDarkMode ? "浅色" : "深色"}
+                </button>
+              </div>
             </div>
           </div>
         </>

@@ -1117,7 +1117,7 @@ input {
     font-size: 13px;
   }
 
-  /* 工作区抽屉：遮罩 */
+  /* 移动端 Panel 遮罩层 */
   .mobileWorkspaceDrawerOverlay {
     position: fixed;
     inset: 0;
@@ -1132,14 +1132,14 @@ input {
     pointer-events: auto;
   }
 
-  /* 工作区抽屉：面板 */
-  .mobileWorkspaceDrawer {
+  /* 移动端 Panel - 完全复刻PC端panel */
+  .mobilePanel {
     position: fixed;
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(280px, 85vw);
-    max-width: 280px;
+    width: min(320px, 85vw);
+    max-width: 320px;
     background: var(--panel);
     border-right: 1px solid var(--border);
     box-shadow: var(--shadow);
@@ -1149,112 +1149,79 @@ input {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    border-radius: 0;
   }
-  .mobileWorkspaceDrawer.mobileWorkspaceDrawerOpen {
+  .mobilePanel.mobilePanelOpen {
     transform: translateX(0);
   }
-  /* 侧边栏内：根目录选择 */
-  .mobileWorkspaceDrawerRootSection {
-    flex-shrink: 0;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .mobileWorkspaceDrawerRootLabel {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--muted);
-  }
-  .mobileWorkspaceDrawerRootSelect {
-    width: 100%;
-    min-width: 0;
-    padding: 8px 10px;
-    font-size: 13px;
-    font-family: var(--mono);
-  }
-  .mobileWorkspaceDrawerRootHint {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .rootAddBarMobile {
-    padding: 0;
-    margin-top: 2px;
-  }
-  .mobileWorkspaceDrawerHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
+  
+  /* 移动端 Panel 内部样式调整 */
+  .mobilePanel .panelHeader {
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
     flex-shrink: 0;
   }
-  .mobileWorkspaceDrawerTitle {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .mobileWorkspaceDrawerClose {
+
+  /* 移动端 Panel 关闭按钮 */
+  .mobilePanelCloseBtn {
     width: 32px;
     height: 32px;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
     color: var(--muted);
+    font-size: 16px;
     cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-    transition: background 200ms ease-out, border-color 200ms ease-out;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
   }
-  .mobileWorkspaceDrawerClose:hover {
-    background: var(--panel2);
-    border-color: #cbd5e1;
+
+  .mobilePanelCloseBtn:hover {
+    background: var(--hover);
     color: var(--text);
   }
-  .mobileWorkspaceDrawerClose:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+
+  .mobilePanelCloseBtn:active {
+    background: var(--hover);
+    color: var(--text);
   }
-  .mobileWorkspaceDrawerList {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    -webkit-overflow-scrolling: touch;
+  
+  .mobilePanel .panelBody {
+    padding: 8px 0;
+    font-size: 15px;
   }
-  .mobileWorkspaceDrawerList .workspaceTab {
-    max-width: none;
-    align-items: flex-start;
+  
+  .mobilePanel .panelSettings {
+    flex-shrink: 0;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   }
-  .mobileWorkspaceDrawerList .workspaceTabLabel {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  
+  /* 移动端文件树字体增大 */
+  .mobilePanel .fileList {
+    font-size: 15px;
   }
-  .mobileWorkspaceDrawerList .workspaceTabName {
-    max-width: none;
+  
+  .mobilePanel .fileRow {
+    font-size: 15px;
   }
-  .mobileWorkspaceDrawerList .workspaceTabCwd {
-    font-size: 10px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--mono);
+  
+  .mobilePanel .fileRow .fileLabel {
+    font-size: 15px;
   }
+  
+  .mobilePanel .dirActions {
+    font-size: 14px;
+  }
+  
+  .mobilePanel .panelSettingsBtn {
+    font-size: 14px;
+  }
+  
   @media (prefers-reduced-motion: reduce) {
-    .mobileWorkspaceDrawerOverlay,
-    .mobileWorkspaceDrawer {
+    .mobilePanel {
       transition: none;
     }
   }
@@ -1556,8 +1523,11 @@ input {
   }
 
   .tabBtn {
-    padding: 4px 6px;
-    font-size: 11px;
+    padding: 6px 10px;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .panelHeader {

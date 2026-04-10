@@ -41,18 +41,37 @@
     background: var(--hover) !important;
   }
 
-  /* 项目名称优化 */
-  .mobileTopbarProjectName {
+  /* 顶部信息区域 */
+  .mobileTopbarInfo {
     flex: 1;
     min-width: 0;
-    font-size: 15px !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 8px;
+  }
+
+  /* 项目名称优化 */
+  .mobileTopbarProjectName {
+    font-size: 16px !important;
     font-weight: 600;
     font-family: inherit !important;
     color: var(--text) !important;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    padding: 0 8px;
+    line-height: 1.4;
+  }
+
+  /* 当前工作区路径 */
+  .mobileTopbarCwd {
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.4;
   }
 
   /* ============================================
@@ -84,23 +103,7 @@
     min-width: 56px;
   }
 
-  .appMobile .tabBtn::before {
-    content: '';
-    font-size: 16px;
-    line-height: 1;
-  }
-
-  .appMobile .tabBtn:nth-child(1)::before {
-    content: '📁';
-  }
-
-  .appMobile .tabBtn:nth-child(2)::before {
-    content: '📝';
-  }
-
-  .appMobile .tabBtn:nth-child(3)::before {
-    content: '💻';
-  }
+  /* 图标由 Font-Awesome 提供，在 App.tsx 中定义 */
 
   .appMobile .tabBtn.tabBtnActive {
     color: var(--accent);
@@ -425,9 +428,5 @@
     flex-direction: row;
     gap: 6px;
     padding: 6px 16px;
-  }
-
-  .appMobile .tabBtn::before {
-    font-size: 14px;
   }
 }
