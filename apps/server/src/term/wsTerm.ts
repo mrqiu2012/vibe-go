@@ -12,6 +12,7 @@ import { ClaudeCliManager } from "./claudeCliManager.js";
 import { OpencodeCliManager } from "./opencodeCliManager.js";
 import { KimiCliManager } from "./kimiCliManager.js";
 import { PtyRestrictedManager } from "./ptyRestrictedManager.js";
+import { CustomCliManager } from "./customCliManager.js";
 
 function safeJsonParse(text: string): any | null {
   try {
@@ -86,6 +87,12 @@ export function attachTermWs(opts: {
     });
     const kimiCliMgr = new KimiCliManager({
       maxSessions: opts.maxSessions,
+      validateCwd: opts.validateCwd,
+      send: (m) => send(ws, m as TermServerMsg),
+    });
+    const customCliMgr = new CustomCliManager({
+      maxSessions: opts.maxSessions,
+      limits: opts.limits,
       validateCwd: opts.validateCwd,
       send: (m) => send(ws, m as TermServerMsg),
     });
@@ -191,6 +198,20 @@ export function attachTermWs(opts: {
             } catch (e: any) {
               return fail("term.open", `Kimi CLI failed: ${e?.message ?? String(e)}`);
             }
+          } else if (mode.startsWith("custom:")) {
+            // Custom CLI mode: custom:<command>:<args>
+            try {
+              const parts = mode.slice(7).split(":");
+              const command = parts[0];
+              const args = parts.slice(1).join(":").split(" ").filter(Boolean);
+              if (!command) {
+                return fail("term.open", "Invalid custom CLI command");
+              }
+              const s = await customCliMgr.open(realCwd, cols, rows, command, args);
+              send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
+            } catch (e: any) {
+              return fail("term.open", `Custom CLI failed: ${e?.message ?? String(e)}`);
+            }
           } else {
             return fail("term.open", `Unknown mode: ${mode}`);
           }
@@ -200,7 +221,8 @@ export function attachTermWs(opts: {
         if (t === "term.close") {
           const sessionId = (msg as any).sessionId;
           if (typeof sessionId !== "string" || !sessionId) return fail("term.close", "Missing sessionId");
-          if (kimiCliMgr.has(sessionId)) kimiCliMgr.close(sessionId);
+          if (customCliMgr.has(sessionId)) customCliMgr.close(sessionId);
+          else if (kimiCliMgr.has(sessionId)) kimiCliMgr.close(sessionId);
           else if (opencodeCliMgr.has(sessionId)) opencodeCliMgr.close(sessionId);
           else if (claudeCliMgr.has(sessionId)) claudeCliMgr.close(sessionId);
           else if (cursorCliMgr.has(sessionId)) cursorCliMgr.close(sessionId);
@@ -220,7 +242,8 @@ export function attachTermWs(opts: {
           const rows = Number((msg as any).rows);
           if (typeof sessionId !== "string" || !sessionId) return fail("term.resize", "Missing sessionId");
           if (!Number.isFinite(cols) || !Number.isFinite(rows)) return fail("term.resize", "Invalid cols/rows");
-          if (kimiCliMgr.has(sessionId)) kimiCliMgr.resize(sessionId, cols, rows);
+          if (customCliMgr.has(sessionId)) customCliMgr.resize(sessionId, cols, rows);
+          else if (kimiCliMgr.has(sessionId)) kimiCliMgr.resize(sessionId, cols, rows);
           else if (opencodeCliMgr.has(sessionId)) opencodeCliMgr.resize(sessionId, cols, rows);
           else if (claudeCliMgr.has(sessionId)) claudeCliMgr.resize(sessionId, cols, rows);
           else if (cursorCliMgr.has(sessionId)) cursorCliMgr.resize(sessionId, cols, rows);
@@ -242,7 +265,8 @@ export function attachTermWs(opts: {
           // Some backends (native/restricted exec) may run long commands on Enter; awaiting them here
           // makes the client think input is broken (request timeouts). Output is streamed via term.data.
           send(ws, { t: "term.stdin.resp", reqId, ok: true });
-          if (kimiCliMgr.has(sessionId)) kimiCliMgr.stdin(sessionId, dataStr);
+          if (customCliMgr.has(sessionId)) customCliMgr.stdin(sessionId, dataStr);
+          else if (kimiCliMgr.has(sessionId)) kimiCliMgr.stdin(sessionId, dataStr);
           else if (opencodeCliMgr.has(sessionId)) opencodeCliMgr.stdin(sessionId, dataStr);
           else if (claudeCliMgr.has(sessionId)) claudeCliMgr.stdin(sessionId, dataStr);
           else if (cursorCliMgr.has(sessionId)) cursorCliMgr.stdin(sessionId, dataStr);
@@ -273,7 +297,7 @@ export function attachTermWs(opts: {
 
     ws.on("close", () => {
       // Best-effort: close all sessions when browser disconnects.
-      const managers = [kimiCliMgr, opencodeCliMgr, claudeCliMgr, cursorCliMgr, codexMgr, codexPtyMgr, restrictedPtyMgr];
+      const managers = [customCliMgr, kimiCliMgr, opencodeCliMgr, claudeCliMgr, cursorCliMgr, codexMgr, codexPtyMgr, restrictedPtyMgr];
       for (const mgr of managers) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -281,7 +305,8 @@ export function attachTermWs(opts: {
           const sessions: Map<string, any> | undefined = anyMgr?.sessions;
           if (sessions && typeof sessions.forEach === "function") {
             sessions.forEach((_v: any, k: string) => {
-              if (mgr === kimiCliMgr) kimiCliMgr.close(k);
+              if (mgr === customCliMgr) customCliMgr.close(k);
+              else if (mgr === kimiCliMgr) kimiCliMgr.close(k);
               else if (mgr === opencodeCliMgr) opencodeCliMgr.close(k);
               else if (mgr === claudeCliMgr) claudeCliMgr.close(k);
               else if (mgr === cursorCliMgr) cursorCliMgr.close(k);

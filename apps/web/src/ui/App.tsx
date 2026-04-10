@@ -30,7 +30,16 @@ import {
 } from "../api";
 import { TermClient, type TermServerMsg } from "../wsTerm";
 import { CursorChatPanel } from "./CursorChatPanel";
-import { AI_INSTALL_GUIDES, getInstallCommand, detectPlatform } from "./aiInstallSkill";
+import {
+  AI_INSTALL_GUIDES,
+  getInstallCommand,
+  detectPlatform,
+  GENERIC_CLI_INSTALL_METHODS,
+  GENERIC_CLI_NOTE,
+  TAILSCALE_INFO,
+  DERP_QUICK_GUIDE,
+  type GenericInstallMethod,
+} from "./aiInstallSkill";
 
 type TreeNode = {
   path: string;
@@ -309,10 +318,12 @@ function TreeView(props: {
   );
 }
 
-type AiMode = "cursor" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli";
+type BuiltInAiMode = "cursor" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli";
+type AiMode = BuiltInAiMode | string; // 支持自定义 CLI
 type AiModeVisibility = Record<AiMode, boolean>;
 
-const AI_MODE_OPTIONS: Array<{ id: AiMode; label: string; title?: string }> = [
+// 内置 AI 模式选项
+const AI_MODE_OPTIONS: Array<{ id: BuiltInAiMode; label: string; title?: string }> = [
   { id: "cursor", label: "Cursor Chat", title: "Cursor Chat（非交互模式）" },
   { id: "codex", label: "Codex" },
   { id: "claude", label: "Claude" },
@@ -320,6 +331,14 @@ const AI_MODE_OPTIONS: Array<{ id: AiMode; label: string; title?: string }> = [
   { id: "kimi", label: "Kimi" },
   { id: "cursor-cli", label: "Cursor CLI" },
 ];
+
+// 自定义 CLI 配置类型
+export type CustomCliConfig = {
+  id: string;
+  label: string;
+  command: string;
+  args?: string;
+};
 
 const DEFAULT_AI_MODE_VISIBILITY: AiModeVisibility = {
   cursor: true,
@@ -330,25 +349,696 @@ const DEFAULT_AI_MODE_VISIBILITY: AiModeVisibility = {
   "cursor-cli": true,
 };
 
-function isAiMode(mode: string): mode is AiMode {
+function isBuiltInAiMode(mode: string): mode is BuiltInAiMode {
   return AI_MODE_OPTIONS.some((option) => option.id === mode);
 }
 
-function readAiModeVisibility() {
+function isAiMode(mode: string): mode is AiMode {
+  return isBuiltInAiMode(mode) || mode.startsWith("custom:");
+}
+
+// 新平台 CLI 通用安装说明子组件
+function GenericCliInstallSection() {
+  return (
+    <div
+      style={{
+        padding: "16px",
+        background: "var(--panel2)",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 600,
+          fontSize: 14,
+          marginBottom: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <i className="fas fa-lightbulb" style={{ color: "#f59e0b" }}></i>
+        如何安装新的 CLI 工具？
+      </div>
+      <p
+        className="fileMeta"
+        style={{ margin: "0 0 12px 0", fontSize: 13, lineHeight: 1.6 }}
+      >
+        不同的 AI CLI 工具有不同的安装方式。建议访问官方文档查看准确的安装命令。
+      </p>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          fontSize: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="fas fa-check-circle" style={{ color: "#10b981" }}></i>
+          <span>常见的安装方式：npm、Homebrew、pip、curl 脚本等</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="fas fa-check-circle" style={{ color: "#10b981" }}></i>
+          <span>安装完成后，确保命令可在终端中直接运行</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="fas fa-check-circle" style={{ color: "#10b981" }}></i>
+          <span>然后在上方填写名称和命令即可添加</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// AI 设置弹窗组件
+function AISettingsModal(props: {
+  aiModeVisibility: AiModeVisibility;
+  setAiModeVisibility: React.Dispatch<React.SetStateAction<AiModeVisibility>>;
+  customClis: CustomCliConfig[];
+  setCustomClis: React.Dispatch<React.SetStateAction<CustomCliConfig[]>>;
+  onClose: () => void;
+  setStatus: (status: string) => void;
+}) {
+  const { aiModeVisibility, setAiModeVisibility, customClis, setCustomClis, onClose, setStatus } = props;
+  const [activeTab, setActiveTab] = useState<"display" | "add" | "install" | "tailscale">("display");
+  const [newCliLabel, setNewCliLabel] = useState("");
+  const [newCliCommand, setNewCliCommand] = useState("");
+  const [newCliArgs, setNewCliArgs] = useState("");
+
+  return (
+    <div
+      className="pasteModalOverlay"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="aiSettingsTitle"
+    >
+      <div
+        className="pasteModalBox"
+        onClick={(e) => e.stopPropagation()}
+        style={{ padding: 0 }}
+      >
+        {/* 标题 */}
+        <h3
+          id="aiSettingsTitle"
+          className="pasteModalTitle"
+          style={{ padding: "16px 20px 0", margin: 0 }}
+        >
+          AI 设置
+        </h3>
+
+        {/* Tab 切换栏 */}
+        <div
+          style={{
+            display: "flex",
+            borderBottom: "1px solid var(--border)",
+            marginTop: 12,
+            padding: "0 20px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setActiveTab("display")}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${activeTab === "display" ? "#3b82f6" : "transparent"}`,
+              color: activeTab === "display" ? "#3b82f6" : "var(--text)",
+              fontSize: 14,
+              fontWeight: activeTab === "display" ? 600 : 400,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <i className="fas fa-eye" style={{ marginRight: 6 }}></i>
+            显示设置
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("add")}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${activeTab === "add" ? "#3b82f6" : "transparent"}`,
+              color: activeTab === "add" ? "#3b82f6" : "var(--text)",
+              fontSize: 14,
+              fontWeight: activeTab === "add" ? 600 : 400,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
+            添加新 CLI
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("install")}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${activeTab === "install" ? "#3b82f6" : "transparent"}`,
+              color: activeTab === "install" ? "#3b82f6" : "var(--text)",
+              fontSize: 14,
+              fontWeight: activeTab === "install" ? 600 : 400,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <i className="fas fa-download" style={{ marginRight: 6 }}></i>
+            安装说明
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("tailscale")}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${activeTab === "tailscale" ? "#3b82f6" : "transparent"}`,
+              color: activeTab === "tailscale" ? "#3b82f6" : "var(--text)",
+              fontSize: 14,
+              fontWeight: activeTab === "tailscale" ? 600 : 400,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <i className="fas fa-network-wired" style={{ marginRight: 6 }}></i>
+            Tailscale
+          </button>
+        </div>
+
+        {/* 内容区域 */}
+        <div style={{ padding: "16px 20px 20px" }}>
+          {activeTab === "display" ? (
+            <>
+              <p className="fileMeta" style={{ margin: "0 0 12px 0" }}>
+                选择要在终端栏显示的 AI 工具
+              </p>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  overflow: "auto",
+                }}
+              >
+                {AI_MODE_OPTIONS.map((option) => (
+                  <label
+                    key={option.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      transition: "background 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={aiModeVisibility[option.id]}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setAiModeVisibility((prev) => {
+                          const next = { ...prev, [option.id]: checked };
+                          // 至少保留一个选中
+                          const hasVisible = AI_MODE_OPTIONS.some((opt) => next[opt.id]);
+                          if (!hasVisible) {
+                            return prev;
+                          }
+                          return next;
+                        });
+                      }}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span style={{ flex: 1 }}>{option.label}</span>
+                    {option.title && option.title !== option.label && (
+                      <span className="fileMeta" style={{ fontSize: 11 }}>
+                        {option.title}
+                      </span>
+                    )}
+                  </label>
+                ))}
+                {/* 自定义 CLI 列表 */}
+                {customClis.map((cli) => (
+                  <label
+                    key={cli.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      transition: "background 0.15s ease",
+                      borderLeft: "3px solid #10b981",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={aiModeVisibility[cli.id] !== false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setAiModeVisibility((prev) => ({ ...prev, [cli.id]: checked }));
+                      }}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span style={{ flex: 1 }}>{cli.label}</span>
+                    <span className="fileMeta" style={{ fontSize: 11 }}>
+                      {cli.command}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCustomClis((prev) => prev.filter((c) => c.id !== cli.id));
+                        setAiModeVisibility((prev) => {
+                          const next = { ...prev };
+                          delete next[cli.id];
+                          return next;
+                        });
+                      }}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#ef4444",
+                        cursor: "pointer",
+                        fontSize: 14,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                      }}
+                      title="删除"
+                    >
+                      <i className="fas fa-trash-alt"></i>
+                    </button>
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : activeTab === "add" ? (
+            <>
+              <p className="fileMeta" style={{ margin: "0 0 16px 0" }}>
+                添加自定义 CLI 工具到终端栏
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
+                    显示名称
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="如：Ollama、GPT-CLI"
+                    value={newCliLabel}
+                    onChange={(e) => setNewCliLabel(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel)",
+                      color: "var(--text)",
+                      fontSize: 14,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
+                    命令
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="如：ollama、gpt"
+                    value={newCliCommand}
+                    onChange={(e) => setNewCliCommand(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel)",
+                      color: "var(--text)",
+                      fontSize: 14,
+                      fontFamily: "var(--mono)",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
+                    默认参数（可选）
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="如：run llama2、chat"
+                    value={newCliArgs}
+                    onChange={(e) => setNewCliArgs(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel)",
+                      color: "var(--text)",
+                      fontSize: 14,
+                      fontFamily: "var(--mono)",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setNewCliLabel("");
+                      setNewCliCommand("");
+                      setNewCliArgs("");
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      if (!newCliLabel.trim() || !newCliCommand.trim()) {
+                        setStatus("请填写名称和命令");
+                        return;
+                      }
+                      const newCli: CustomCliConfig = {
+                        id: `custom:${Date.now()}`,
+                        label: newCliLabel.trim(),
+                        command: newCliCommand.trim(),
+                        args: newCliArgs.trim() || undefined,
+                      };
+                      setCustomClis((prev) => [...prev, newCli]);
+                      setAiModeVisibility((prev) => ({ ...prev, [newCli.id]: true }));
+                      setNewCliLabel("");
+                      setNewCliCommand("");
+                      setNewCliArgs("");
+                      setStatus(`已添加 ${newCli.label}`);
+                      setActiveTab("display");
+                    }}
+                    style={{ flex: 1, background: "#3b82f6", color: "#fff" }}
+                  >
+                    添加
+                  </button>
+                </div>
+              </div>
+
+              {/* 新平台 CLI 通用说明 */}
+              <div style={{ marginTop: 24 }}>
+                <GenericCliInstallSection />
+              </div>
+            </>
+          ) : activeTab === "install" ? (
+            <>
+              <p className="fileMeta" style={{ margin: "0 0 12px 0" }}>
+                各 AI 工具的安装命令，点击可复制
+              </p>
+              <div style={{ maxHeight: 280, overflow: "auto" }}>
+                {AI_INSTALL_GUIDES.map((tool) => {
+                  const platform = detectPlatform();
+                  const command = getInstallCommand(tool, platform);
+                  return (
+                    <div key={tool.id} style={{ marginBottom: 14 }}>
+                      <div
+                        style={{
+                          fontWeight: 500,
+                          fontSize: 13,
+                          marginBottom: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        {tool.name}
+                        <span
+                          className="fileMeta"
+                          style={{ fontSize: 11, flex: 1 }}
+                        >
+                          {tool.description}
+                        </span>
+                        {tool.docsUrl && (
+                          <a
+                            href={tool.docsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              fontSize: 11,
+                              color: "#3b82f6",
+                              textDecoration: "none",
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            文档 <i className="fas fa-external-link-alt" style={{ fontSize: 10 }}></i>
+                          </a>
+                        )}
+                      </div>
+                      {command && (
+                        <code
+                          style={{
+                            display: "block",
+                            padding: "8px 10px",
+                            background: "var(--panel2)",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontFamily: "var(--mono)",
+                            wordBreak: "break-all",
+                            cursor: "pointer",
+                            border: "1px solid var(--border)",
+                          }}
+                          title="点击复制"
+                          onClick={() => {
+                            navigator.clipboard.writeText(command);
+                            setStatus(`已复制 ${tool.name} 安装命令`);
+                          }}
+                        >
+                          {command}
+                        </code>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 新平台 CLI 通用说明 */}
+              <GenericCliInstallSection />
+            </>
+          ) : activeTab === "tailscale" ? (
+            <>
+              {/* Tailscale 下载链接 */}
+              <div
+                style={{
+                  padding: "16px",
+                  background: "var(--panel2)",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 14,
+                    marginBottom: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <i className="fas fa-download" style={{ color: "#3b82f6" }}></i>
+                  1. 下载安装 Tailscale
+                </div>
+                <p className="fileMeta" style={{ margin: "0 0 12px 0", fontSize: 13 }}>
+                  在所有需要互联的设备上安装 Tailscale，使用相同的账号登录。
+                </p>
+                <a
+                  href={TAILSCALE_INFO.officialUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "10px 16px",
+                    background: "#3b82f6",
+                    color: "#fff",
+                    borderRadius: 6,
+                    textDecoration: "none",
+                    fontSize: 14,
+                    fontWeight: 500,
+                  }}
+                >
+                  <i className="fas fa-external-link-alt"></i>
+                  前往 Tailscale 官网下载
+                </a>
+              </div>
+
+              {/* 本项目监听配置 */}
+              <div
+                style={{
+                  padding: "16px",
+                  background: "var(--panel2)",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 14,
+                    marginBottom: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <i className="fas fa-cog" style={{ color: "#10b981" }}></i>
+                  2. 本项目监听配置
+                </div>
+                <p className="fileMeta" style={{ margin: "0 0 12px 0", fontSize: 13 }}>
+                  {TAILSCALE_INFO.listenConfig.description}
+                </p>
+                <div
+                  style={{
+                    background: "var(--panel)",
+                    padding: "12px",
+                    borderRadius: 6,
+                    fontFamily: "var(--mono)",
+                    fontSize: 13,
+                    marginBottom: 12,
+                  }}
+                >
+                  <div style={{ marginBottom: 8 }}>
+                    <span style={{ color: "var(--muted)" }}># 默认配置（仅本机访问）</span>
+                    <br />
+                    <span style={{ color: "#ef4444" }}>host: {TAILSCALE_INFO.listenConfig.defaultHost}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}># Tailscale 配置（允许内网访问）</span>
+                    <br />
+                    <span style={{ color: "#10b981" }}>host: {TAILSCALE_INFO.listenConfig.tailscaleHost}</span>
+                  </div>
+                </div>
+                <p className="fileMeta" style={{ margin: 0, fontSize: 12 }}>
+                  <i className="fas fa-info-circle" style={{ marginRight: 4 }}></i>
+                  {TAILSCALE_INFO.listenConfig.note}
+                </p>
+              </div>
+
+              {/* 自建 DERP 说明 */}
+              <div
+                style={{
+                  padding: "16px",
+                  background: "var(--panel2)",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 14,
+                    marginBottom: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <i className="fas fa-server" style={{ color: "#8b5cf6" }}></i>
+                  3. 自建 DERP 服务器（可选）
+                </div>
+                <p className="fileMeta" style={{ margin: "0 0 12px 0", fontSize: 13 }}>
+                  当设备无法直连时，Tailscale 会通过 DERP 中继服务器转发流量。
+                  自建 DERP 可以降低延迟、提高稳定性。
+                </p>
+                <div
+                  style={{
+                    maxHeight: 300,
+                    overflow: "auto",
+                    background: "var(--panel)",
+                    padding: "12px",
+                    borderRadius: 6,
+                    fontFamily: "var(--mono)",
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {DERP_QUICK_GUIDE}
+                </div>
+              </div>
+            </>
+          ) : null}
+        </div>
+
+        {/* 底部按钮 */}
+        <div
+          className="pasteModalActions"
+          style={{
+            padding: "12px 20px",
+            borderTop: "1px solid var(--border)",
+            margin: 0,
+          }}
+        >
+          <button type="button" className="btn" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function readAiModeVisibility(): AiModeVisibility {
   try {
     const raw = localStorage.getItem("vibego:visibleAiModes");
     if (!raw) return { ...DEFAULT_AI_MODE_VISIBILITY };
     const parsed = JSON.parse(raw) as Partial<AiModeVisibility> | null;
-    return {
-      cursor: parsed?.cursor ?? DEFAULT_AI_MODE_VISIBILITY.cursor,
-      codex: parsed?.codex ?? DEFAULT_AI_MODE_VISIBILITY.codex,
-      claude: parsed?.claude ?? DEFAULT_AI_MODE_VISIBILITY.claude,
-      opencode: parsed?.opencode ?? DEFAULT_AI_MODE_VISIBILITY.opencode,
-      kimi: parsed?.kimi ?? DEFAULT_AI_MODE_VISIBILITY.kimi,
-      "cursor-cli": parsed?.["cursor-cli"] ?? DEFAULT_AI_MODE_VISIBILITY["cursor-cli"],
-    };
+    const result: AiModeVisibility = { ...DEFAULT_AI_MODE_VISIBILITY };
+    // 合并保存的值（包括自定义 CLI）
+    if (parsed) {
+      Object.entries(parsed).forEach(([key, value]) => {
+        result[key] = value ?? false;
+      });
+    }
+    return result;
   } catch {
     return { ...DEFAULT_AI_MODE_VISIBILITY };
+  }
+}
+
+function readCustomClis(): CustomCliConfig[] {
+  try {
+    const raw = localStorage.getItem("vibego:customClis");
+    if (!raw) return [];
+    return JSON.parse(raw) as CustomCliConfig[];
+  } catch {
+    return [];
   }
 }
 
@@ -392,6 +1082,7 @@ export function App() {
   const [rootPickerLoading, setRootPickerLoading] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [aiModeVisibility, setAiModeVisibility] = useState<AiModeVisibility>(() => readAiModeVisibility());
+  const [customClis, setCustomClis] = useState<CustomCliConfig[]>(() => readCustomClis());
 
   // Dark mode effect
   useEffect(() => {
@@ -493,8 +1184,13 @@ export function App() {
 
   const terminalVisible = !isMobile || mobileTab === "terminal";
   const visibleAiModeOptions = useMemo(
-    () => AI_MODE_OPTIONS.filter((option) => aiModeVisibility[option.id]),
-    [aiModeVisibility],
+    () => [
+      ...AI_MODE_OPTIONS.filter((option) => aiModeVisibility[option.id]),
+      ...customClis
+        .filter((cli) => aiModeVisibility[cli.id] !== false) // 默认显示
+        .map((cli) => ({ id: cli.id as AiMode, label: cli.label, title: `${cli.command} ${cli.args || ""}`.trim() })),
+    ],
+    [aiModeVisibility, customClis],
   );
   const firstVisibleAiMode = useMemo(
     () => visibleAiModeOptions[0]?.id ?? null,
@@ -504,6 +1200,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("vibego:visibleAiModes", JSON.stringify(aiModeVisibility));
   }, [aiModeVisibility]);
+
+  useEffect(() => {
+    localStorage.setItem("vibego:customClis", JSON.stringify(customClis));
+  }, [customClis]);
 
   useEffect(() => {
     if (isAiMode(termMode) && !aiModeVisibility[termMode]) {
@@ -591,7 +1291,7 @@ export function App() {
     }
 
     void client.stdin(sid, data).catch((e) => {
-      if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli") {
+      if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli" || termModeRef.current?.startsWith("custom:")) {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n`);
       } else {
         term.write(`\r\n[错误] ${e?.message ?? String(e)}\r\n$ `);
@@ -1666,7 +2366,7 @@ export function App() {
           }
         } else {
           // Buffer for Codex/Claude/OpenCode/Kimi/Cursor CLI in case output arrives before open.resp.
-          if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli") {
+          if (termModeRef.current === "codex" || termModeRef.current === "claude" || termModeRef.current === "opencode" || termModeRef.current === "kimi" || termModeRef.current === "cursor-cli" || termModeRef.current?.startsWith("custom:")) {
             if (!termPendingDataBufferRef.current.has(sid)) termPendingDataBufferRef.current.set(sid, []);
             termPendingDataBufferRef.current.get(sid)!.push(m.data);
           }
@@ -1711,6 +2411,13 @@ export function App() {
           termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[cursor-cli 已退出 ${m.code ?? "?"}]\r\n`);
+        } else if (sessionMode?.startsWith("custom:")) {
+          termSessionIdRef.current = "";
+          termSessionModeRef.current = "";
+          termSessionIsPtyRef.current = false;
+          cursorPromptNudgedRef.current = false;
+          const cliName = sessionMode.slice(7).split(":")[0];
+          term.write(`\r\n[${cliName} 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (sessionMode === "restricted" && termSessionIsPtyRef.current) {
           termSessionIdRef.current = "";
           termSessionModeRef.current = "";
@@ -1861,6 +2568,7 @@ export function App() {
         
         // Determine actual mode for WebSocket
         // Map cursor-cli modes to the backend modes: cursor-cli-agent/plan/ask
+        // Custom CLI modes are sent as custom:<command>:<args>
         let actualMode:
           | "restricted"
           | "native"
@@ -1870,19 +2578,30 @@ export function App() {
           | "kimi"
           | "cursor-cli-agent"
           | "cursor-cli-plan"
-          | "cursor-cli-ask";
+          | "cursor-cli-ask"
+          | string; // Allow custom CLI modes
         if (termMode === "cursor-cli") {
           actualMode = `cursor-cli-${cursorCliMode}` as
             | "cursor-cli-agent"
             | "cursor-cli-plan"
             | "cursor-cli-ask";
+        } else if (termMode.startsWith("custom:")) {
+          // Custom CLI: find the config and build mode string
+          const customId = termMode;
+          const cliConfig = customClis.find((c) => c.id === customId);
+          if (cliConfig) {
+            const argsStr = cliConfig.args ? `:${cliConfig.args.replace(/\s+/g, ":")}` : "";
+            actualMode = `custom:${cliConfig.command}${argsStr}`;
+          } else {
+            actualMode = termMode;
+          }
         } else {
           actualMode = termMode; // termMode here is "restricted" | "codex" | "claude" | "opencode"
         }
         logTerm("actualMode", { actualMode });
         
-        // Reset terminal when switching into codex/claude/opencode/kimi/cursor-cli/restricted to avoid mixing outputs.
-        if (termMode === "codex" || termMode === "claude" || termMode === "opencode" || termMode === "kimi" || termMode === "cursor-cli" || termMode === "restricted") {
+        // Reset terminal when switching into codex/claude/opencode/kimi/cursor-cli/restricted/custom to avoid mixing outputs.
+        if (termMode === "codex" || termMode === "claude" || termMode === "opencode" || termMode === "kimi" || termMode === "cursor-cli" || termMode === "restricted" || termMode.startsWith("custom:")) {
           term.reset();
         } else {
           term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
@@ -1900,6 +2619,7 @@ export function App() {
           actualMode === "cursor-cli-agent" ||
           actualMode === "cursor-cli-plan" ||
           actualMode === "cursor-cli-ask" ||
+          actualMode.startsWith("custom:") ||
           (actualMode === "restricted" && resp.mode === "restricted-pty");
         termSessionIsPtyRef.current = isPtySession;
         lastOpenKeyRef.current = openKey;
@@ -1966,7 +2686,7 @@ export function App() {
           await client.stdin(resp.sessionId, pending).catch(() => {});
         }
 
-        if (!isPtySession && termMode !== "codex" && termMode !== "claude" && termMode !== "opencode" && termMode !== "kimi" && termMode !== "cursor-cli") term.write("$ ");
+        if (!isPtySession && termMode !== "codex" && termMode !== "claude" && termMode !== "opencode" && termMode !== "kimi" && termMode !== "cursor-cli" && !termMode.startsWith("custom:")) term.write("$ ");
       } catch (e: any) {
         lastOpenKeyRef.current = "";
           setStatus(`[错误] 终端: ${e?.message ?? String(e)}`);
@@ -3093,125 +3813,14 @@ export function App() {
       ) : null}
 
       {aiSettingsOpen ? (
-        <div
-          className="pasteModalOverlay"
-          onClick={() => setAiSettingsOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="aiSettingsTitle"
-        >
-          <div
-            className="pasteModalBox"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: 400 }}
-          >
-            <h3 id="aiSettingsTitle" className="pasteModalTitle">AI 显示设置</h3>
-            <p className="fileMeta" style={{ marginBottom: 12 }}>
-              选择要在终端栏显示的 AI 工具
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-              {AI_MODE_OPTIONS.map((option) => (
-                <label
-                  key={option.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    transition: "background 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--hover)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={aiModeVisibility[option.id]}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setAiModeVisibility((prev) => {
-                        const next = { ...prev, [option.id]: checked };
-                        // 至少保留一个选中
-                        const hasVisible = AI_MODE_OPTIONS.some((opt) => next[opt.id]);
-                        if (!hasVisible) {
-                          return prev;
-                        }
-                        return next;
-                      });
-                    }}
-                    style={{ cursor: "pointer" }}
-                  />
-                  <span style={{ flex: 1 }}>{option.label}</span>
-                  {option.title && option.title !== option.label && (
-                    <span className="fileMeta" style={{ fontSize: 11 }}>
-                      {option.title}
-                    </span>
-                  )}
-                </label>
-              ))}
-            </div>
-            <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
-              <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 600 }}>
-                <i className="fas fa-download" style={{ marginRight: 6, color: "#3b82f6" }}></i>
-                手动安装指南
-              </h4>
-              <div style={{ maxHeight: 200, overflow: "auto" }}>
-                {AI_INSTALL_GUIDES.map((tool) => {
-                  const platform = detectPlatform();
-                  const command = getInstallCommand(tool, platform);
-                  return (
-                    <div key={tool.id} style={{ marginBottom: 12 }}>
-                      <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>
-                        {tool.name}
-                        <span className="fileMeta" style={{ marginLeft: 8, fontSize: 11 }}>
-                          {tool.description}
-                        </span>
-                      </div>
-                      {command && (
-                        <code
-                          style={{
-                            display: "block",
-                            padding: "6px 8px",
-                            background: "var(--panel2)",
-                            borderRadius: 6,
-                            fontSize: 11,
-                            fontFamily: "var(--mono)",
-                            wordBreak: "break-all",
-                            cursor: "pointer",
-                          }}
-                          title="点击复制"
-                          onClick={() => {
-                            navigator.clipboard.writeText(command);
-                            setStatus(`已复制 ${tool.name} 安装命令`);
-                          }}
-                        >
-                          {command}
-                        </code>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="fileMeta" style={{ marginTop: 8, fontSize: 11 }}>
-                点击命令可复制到剪贴板，在终端中粘贴执行
-              </p>
-            </div>
-            <div className="pasteModalActions" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setAiSettingsOpen(false)}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
+        <AISettingsModal
+          aiModeVisibility={aiModeVisibility}
+          setAiModeVisibility={setAiModeVisibility}
+          customClis={customClis}
+          setCustomClis={setCustomClis}
+          onClose={() => setAiSettingsOpen(false)}
+          setStatus={setStatus}
+        />
       ) : null}
 
       {status ? (

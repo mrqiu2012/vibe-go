@@ -157,6 +157,14 @@ npm install -g opencode-ai
 opencode --version
 ```
 
+**CLI 通用说明（接入任意新 CLI / 新平台时同样适用）**
+
+- VibeGo 在本机启动终端子进程，各厂商 CLI 必须对**运行 VibeGo 的同一用户**在默认 shell 里能通过 **PATH** 找到可执行文件。
+- 安装或升级后请**重开终端**（或执行 `hash -r` / 重新 `source` shell 配置），再用 `which <命令>`（macOS/Linux）或 `where.exe <命令>`（Windows）确认。
+- 在 Web 终端中切换到与目标 CLI 对应的模式（如 Codex / Claude / Cursor 等）；**Restricted** 模式不会自动带上各厂商 CLI。
+- 安装完成后至少执行一次 `<命令> --version`；若提示找不到命令，优先检查 PATH、npm/pnpm 全局前缀、以及是否装在与当前终端一致的环境里。
+- 登录态、Workspace 信任、代理与网络策略以**各 CLI 官方文档**为准；本 README 仅覆盖常见安装与 PATH 排查。
+
 6. 启动项目
 
 ```bash
@@ -299,6 +307,14 @@ npm install -g opencode-ai
 
 opencode --version
 ```
+
+**General CLI notes (applies to any new vendor CLI / platform)**
+
+- VibeGo spawns local terminal subprocesses; each CLI binary must be **on PATH** for the **same user** that runs VibeGo, in the default shell.
+- After install or upgrade, **restart the terminal** (or run `hash -r` / reload shell config), then verify with `which <cmd>` (macOS/Linux) or `where.exe <cmd>` (Windows).
+- In the web terminal, pick the mode that matches the CLI (e.g. Codex / Claude / Cursor). **Restricted** mode does not assume vendor CLIs.
+- Run `<cmd> --version` at least once after install; if “command not found”, check PATH, npm/pnpm global prefix, and that you installed into the same environment as this shell.
+- Login, workspace trust, proxies, and network rules follow **each vendor’s docs**; this README only covers common install and PATH troubleshooting.
 
 6. Start
 

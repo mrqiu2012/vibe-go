@@ -168,7 +168,7 @@ input {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -188,7 +188,7 @@ input {
 }
 
 .panel.panelCollapsed .panelHeader {
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .panel.panelCollapsed .panelHeader + .panelHeader {
@@ -291,7 +291,7 @@ input {
   gap: 8px;
   background: var(--panel);
   overflow: hidden;
-  border-radius: 14px 14px 0 0;
+  border-radius: 8px 14px 0 0;
   flex-shrink: 0;
 }
 
@@ -315,7 +315,7 @@ input {
   gap: 6px;
   max-width: 200px;
   padding: 6px 10px;
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
@@ -359,18 +359,27 @@ input {
 
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: visible;
-  background: var(--panel);
+  border-bottom: 2px solid var(--border);
+  background: transparent;
+  gap: 4px;
 }
 
 .segBtn {
   border: 0;
   background: transparent;
-  padding: 6px 10px;
+  padding: 8px 14px;
   cursor: pointer;
   color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s ease;
+}
+
+.segBtn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
 }
 
 .segBtn:disabled {
@@ -379,8 +388,9 @@ input {
 }
 
 .segBtnActive {
-  background: rgba(37, 99, 235, 0.08);
-  color: var(--accent2);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: transparent;
 }
 
 /* 彩色 segBtn */
@@ -508,11 +518,15 @@ input {
 .pasteModalBox {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   box-shadow: var(--shadow);
-  padding: 16px;
-  width: 100%;
-  max-width: 420px;
+  padding: 24px;
+  width: 800px;
+  height: 600px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+  box-sizing: border-box;
 }
 .pasteModalTitle {
   margin: 0 0 12px;
@@ -597,7 +611,7 @@ input {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 7px 10px;
   cursor: pointer;
   transition: background 180ms ease, border-color 180ms ease;
@@ -695,7 +709,7 @@ input {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 7px 10px;
 }
 
@@ -795,7 +809,7 @@ input {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 4px 8px;
   font-family: var(--mono);
   font-size: 12px;
@@ -903,7 +917,7 @@ input {
   margin: 12px;
   padding: 14px;
   border: 1px dashed var(--border);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--panel2);
 }
 
@@ -925,7 +939,7 @@ input {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 8px 8px;
 }
 
 .termAreaWrap {
@@ -987,7 +1001,7 @@ input {
 .termMobileKeyBtn {
   flex: 1;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--panel2);
   color: var(--text);
@@ -1025,7 +1039,7 @@ input {
     height: 36px;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 6px;
     background: var(--panel);
     color: var(--text);
     font: inherit;
@@ -1292,8 +1306,8 @@ input {
   .termPanelHeaderRow .segBtn {
     flex: 0 0 auto;
     white-space: nowrap;
-    padding-left: 6px;
-    padding-right: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
   }
 
   .termPanelHeaderRow .termPasteBtn {
@@ -1335,8 +1349,8 @@ input {
   }
 
   .segBtn {
-    padding: 5px 8px;
-    font-size: 11px;
+    padding: 6px 10px;
+    font-size: 12px;
   }
 
   .fileMeta {
@@ -1567,8 +1581,8 @@ input {
   }
 
   .segBtn {
-    padding: 4px 6px;
-    font-size: 10px;
+    padding: 5px 8px;
+    font-size: 11px;
   }
 
   .chatHeader {
@@ -1604,7 +1618,7 @@ input {
   min-height: 0;
   height: 100%;
   background: var(--panel);
-  border-radius: 0 0 12px 12px;
+  border-radius: 0 0 6px 6px;
   overflow: hidden;
 }
 
@@ -1663,7 +1677,7 @@ input {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  border-radius: 10px;
+  border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
   font-size: 12px;
@@ -1681,7 +1695,7 @@ input {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  border-radius: 10px;
+  border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
   font-size: 12px;
@@ -1760,7 +1774,7 @@ input {
 
 .messageContent {
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: 6px;
   word-wrap: break-word;
 }
 
@@ -1953,7 +1967,7 @@ input {
   flex: 1;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 6px;
   font-family: inherit;
   font-size: 13px;
   resize: none;
@@ -1978,7 +1992,7 @@ input {
   background: var(--accent2);
   color: #ffffff;
   border: none;
-  border-radius: 10px;
+  border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
   transition: background 180ms ease, transform 100ms ease;
@@ -2006,7 +2020,7 @@ input {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  border-radius: 10px;
+  border-radius: 6px;
   cursor: pointer;
   font-weight: 500;
   font-size: 12px;
@@ -2147,7 +2161,7 @@ input {
 
 .historyItem {
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--panel);
   cursor: pointer;
@@ -2529,7 +2543,7 @@ input {
   margin-bottom: 28px;
   padding: 20px;
   background: var(--panel);
-  border-radius: 12px;
+  border-radius: 6px;
   box-shadow: var(--shadow);
 }
 
@@ -2901,7 +2915,7 @@ input {
   height: 36px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--panel);
   color: var(--text);
   font: inherit;

@@ -110,3 +110,120 @@ export function detectPlatform(): "macos" | "linux" | "windows" {
   if (userAgent.includes("mac")) return "macos";
   return "linux";
 }
+
+// 新平台 CLI 通用安装说明
+// 用于未列出的新 AI CLI 工具，提供通用安装方式参考
+export type GenericInstallMethod = {
+  name: string;
+  command: string;
+  description?: string;
+  color?: string;
+};
+
+export const GENERIC_CLI_INSTALL_METHODS: GenericInstallMethod[] = [
+  {
+    name: "npm",
+    command: "npm install -g <cli-name>",
+    description: "Node.js 包管理器全局安装",
+    color: "#8b5cf6",
+  },
+  {
+    name: "npx",
+    command: "npx <cli-name>",
+    description: "无需安装直接运行",
+    color: "#8b5cf6",
+  },
+  {
+    name: "Homebrew",
+    command: "brew install <cli-name>",
+    description: "macOS 包管理器",
+    color: "#f59e0b",
+  },
+  {
+    name: "curl",
+    command: "curl -fsSL <install-url> | bash",
+    description: "通过脚本安装（常见方式）",
+    color: "#3b82f6",
+  },
+  {
+    name: "pip",
+    command: "pip install <cli-name>",
+    description: "Python 包管理器安装",
+    color: "#10b981",
+  },
+];
+
+export const GENERIC_CLI_NOTE =
+  '将 <cli-name> 替换为实际的 CLI 工具名称。建议先查看官方文档获取准确的安装命令。';
+
+// Tailscale 安装与配置信息
+export type TailscaleInstallInfo = {
+  officialUrl: string;
+  derpDocPath: string;
+  listenConfig: {
+    description: string;
+    defaultHost: string;
+    tailscaleHost: string;
+    note: string;
+  };
+};
+
+export const TAILSCALE_INFO: TailscaleInstallInfo = {
+  officialUrl: "https://tailscale.com/download",
+  derpDocPath: "/docs/tailscale-derp.md",
+  listenConfig: {
+    description: "本项目需要监听 0.0.0.0 才能通过 Tailscale 内网 IP 访问",
+    defaultHost: "localhost",
+    tailscaleHost: "0.0.0.0",
+    note: "修改后重启服务生效。访问地址：http://<tailscale-ip>:<port>",
+  },
+};
+
+// 自建 DERP 简要说明
+export const DERP_QUICK_GUIDE = `
+## 自建 DERP 服务器（简要步骤）
+
+⚠️ **以下操作在服务器上执行**
+
+### 1. 安装 derper
+\`\`\`bash
+# 在服务器上从源码编译
+git clone https://github.com/tailscale/tailscale.git
+cd tailscale/cmd/derper
+go build
+\`\`\`
+
+### 2. 启动 derper（在服务器上执行，推荐直接监听 443）
+\`\`\`bash
+sudo ./derper -hostname derp.yourdomain.com -certdir=/path/to/cert -stun-port 3478
+\`\`\`
+
+### 3. Tailscale ACL 配置
+在 Tailscale 后台 → Access controls 中添加：
+\`\`\`json
+"derpMap": {
+  "OmitDefaultRegions": true,
+  "Regions": {
+    "900": {
+      "RegionID": 900,
+      "RegionCode": "custom",
+      "RegionName": "Custom",
+      "Nodes": [{
+        "Name": "1",
+        "RegionID": 900,
+        "HostName": "derp.yourdomain.com",
+        "IPv4": "your-server-ip"
+      }]
+    }
+  }
+}
+\`\`\`
+
+### 4. 验证
+\`\`\`bash
+tailscale netcheck  # 查看 DERP 延迟
+tailscale status    # 查看连接方式
+\`\`\`
+
+详细文档请参考项目 docs/tailscale-derp.md
+`;
