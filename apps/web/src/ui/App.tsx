@@ -2352,57 +2352,35 @@ export function App() {
               {!panelTerminalCollapsed ? (
                 <div className="termPanelHeaderRow">
                   <div className="segmented" aria-label="终端模式">
+                    {visibleAiModeOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        className={"segBtn" + (termMode === option.id ? " segBtnActive" : "")}
+                        onClick={() => {
+                          setTermMode(option.id);
+                          if (option.id !== "cursor") {
+                            termRef.current?.focus();
+                            setTimeout(() => termRef.current?.focus(), 50);
+                          }
+                        }}
+                        title={option.title || option.label}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                     <button
-                      className={"segBtn" + (termMode === "cursor" ? " segBtnActive" : "")}
-                      onClick={() => setTermMode("cursor")}
-                      title="Cursor Chat（非交互模式）"
+                      className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")}
+                      onClick={() => {
+                        setRestrictedNonce((n) => n + 1);
+                        setTermMode("restricted");
+                        termRef.current?.focus();
+                        setTimeout(() => termRef.current?.focus(), 50);
+                      }}
+                      title="受限终端"
                     >
-                      Cursor Chat
+                      终端
                     </button>
-                  <button className={"segBtn" + (termMode === "codex" ? " segBtnActive" : "")} onClick={() => {
-                    setTermMode("codex");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    Codex
-                  </button>
-                  <button className={"segBtn" + (termMode === "claude" ? " segBtnActive" : "")} onClick={() => {
-                    setTermMode("claude");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    Claude
-                  </button>
-                  <button className={"segBtn" + (termMode === "opencode" ? " segBtnActive" : "")} onClick={() => {
-                    setTermMode("opencode");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    OpenCode
-                  </button>
-                  <button className={"segBtn" + (termMode === "kimi" ? " segBtnActive" : "")} onClick={() => {
-                    setTermMode("kimi");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    Kimi
-                  </button>
-                  <button className={"segBtn" + (termMode === "cursor-cli" ? " segBtnActive" : "")} onClick={() => {
-                    setTermMode("cursor-cli");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    Cursor CLI
-                  </button>
-                  <button className={"segBtn" + (termMode === "restricted" ? " segBtnActive" : "")} onClick={() => {
-                    setRestrictedNonce((n) => n + 1);
-                    setTermMode("restricted");
-                    termRef.current?.focus();
-                    setTimeout(() => termRef.current?.focus(), 50);
-                  }}>
-                    终端
-                  </button>
-                </div>
+                  </div>
                   <div className="row" style={{ marginLeft: "auto" }}>
                     {termMode !== "cursor" && (
                       <button
@@ -3107,6 +3085,82 @@ export function App() {
                 }}
               >
                 确定
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {aiSettingsOpen ? (
+        <div
+          className="pasteModalOverlay"
+          onClick={() => setAiSettingsOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="aiSettingsTitle"
+        >
+          <div
+            className="pasteModalBox"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 400 }}
+          >
+            <h3 id="aiSettingsTitle" className="pasteModalTitle">AI 显示设置</h3>
+            <p className="fileMeta" style={{ marginBottom: 12 }}>
+              选择要在终端栏显示的 AI 工具
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {AI_MODE_OPTIONS.map((option) => (
+                <label
+                  key={option.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    transition: "background 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={aiModeVisibility[option.id]}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAiModeVisibility((prev) => {
+                        const next = { ...prev, [option.id]: checked };
+                        // 至少保留一个选中
+                        const hasVisible = AI_MODE_OPTIONS.some((opt) => next[opt.id]);
+                        if (!hasVisible) {
+                          return prev;
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{ cursor: "pointer" }}
+                  />
+                  <span style={{ flex: 1 }}>{option.label}</span>
+                  {option.title && option.title !== option.label && (
+                    <span className="fileMeta" style={{ fontSize: 11 }}>
+                      {option.title}
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <div className="pasteModalActions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setAiSettingsOpen(false)}
+              >
+                关闭
               </button>
             </div>
           </div>
