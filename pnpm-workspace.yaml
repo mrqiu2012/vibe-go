@@ -5,3 +5,4 @@ packages:
 onlyBuiltDependencies:
   - esbuild
   - "@homebridge/node-pty-prebuilt-multiarch"
+  - better-sqlite3
