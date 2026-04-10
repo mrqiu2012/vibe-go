@@ -12,6 +12,7 @@ import { FitAddon } from "xterm-addon-fit";
 import hljs from "highlight.js";
 import { 
   apiList, 
+  apiPickRoot,
   apiRead, 
   apiRoots, 
   apiWrite, 
@@ -20,7 +21,6 @@ import {
   apiCreateWorkspace,
   apiSetActiveWorkspace,
   apiDeleteWorkspace,
-  apiGetLastOpenedFile,
   apiSetLastOpenedFile,
   apiGetActiveRoot,
   apiSetActiveRoot,
@@ -308,6 +308,49 @@ function TreeView(props: {
   );
 }
 
+type AiMode = "cursor" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli";
+type AiModeVisibility = Record<AiMode, boolean>;
+
+const AI_MODE_OPTIONS: Array<{ id: AiMode; label: string; title?: string }> = [
+  { id: "cursor", label: "Cursor Chat", title: "Cursor Chat（非交互模式）" },
+  { id: "codex", label: "Codex" },
+  { id: "claude", label: "Claude" },
+  { id: "opencode", label: "OpenCode" },
+  { id: "kimi", label: "Kimi" },
+  { id: "cursor-cli", label: "Cursor CLI" },
+];
+
+const DEFAULT_AI_MODE_VISIBILITY: AiModeVisibility = {
+  cursor: true,
+  codex: true,
+  claude: true,
+  opencode: true,
+  kimi: true,
+  "cursor-cli": true,
+};
+
+function isAiMode(mode: string): mode is AiMode {
+  return AI_MODE_OPTIONS.some((option) => option.id === mode);
+}
+
+function readAiModeVisibility() {
+  try {
+    const raw = localStorage.getItem("vibego:visibleAiModes");
+    if (!raw) return { ...DEFAULT_AI_MODE_VISIBILITY };
+    const parsed = JSON.parse(raw) as Partial<AiModeVisibility> | null;
+    return {
+      cursor: parsed?.cursor ?? DEFAULT_AI_MODE_VISIBILITY.cursor,
+      codex: parsed?.codex ?? DEFAULT_AI_MODE_VISIBILITY.codex,
+      claude: parsed?.claude ?? DEFAULT_AI_MODE_VISIBILITY.claude,
+      opencode: parsed?.opencode ?? DEFAULT_AI_MODE_VISIBILITY.opencode,
+      kimi: parsed?.kimi ?? DEFAULT_AI_MODE_VISIBILITY.kimi,
+      "cursor-cli": parsed?.["cursor-cli"] ?? DEFAULT_AI_MODE_VISIBILITY["cursor-cli"],
+    };
+  } catch {
+    return { ...DEFAULT_AI_MODE_VISIBILITY };
+  }
+}
+
 export function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileTab, setMobileTab] = useState<"explorer" | "editor" | "terminal">("terminal");
@@ -326,9 +369,9 @@ export function App() {
   });
 
   // PC 端三块区域折叠状态（仅桌面端生效）
-  const [panelExplorerCollapsed, setPanelExplorerCollapsed] = useState(false);
-  const [panelEditorCollapsed, setPanelEditorCollapsed] = useState(false); // 编辑器默认展开
-  const [panelTerminalCollapsed, setPanelTerminalCollapsed] = useState(false);
+  const panelExplorerCollapsed = false;
+  const [panelEditorCollapsed, setPanelEditorCollapsed] = useState(true); // 编辑器默认隐藏
+  const panelTerminalCollapsed = false;
 
   const [roots, setRoots] = useState<string[]>([]);
   const [activeRoot, setActiveRoot] = useState("");
@@ -345,6 +388,9 @@ export function App() {
   const fileListRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
+  const [rootPickerLoading, setRootPickerLoading] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [aiModeVisibility, setAiModeVisibility] = useState<AiModeVisibility>(() => readAiModeVisibility());
 
   // Dark mode effect
   useEffect(() => {
@@ -387,13 +433,13 @@ export function App() {
   const [fileStateByPath, setFileStateByPath] = useState<
     Record<string, { text: string; dirty: boolean; info: { size: number; mtimeMs: number } | null }>
   >({});
-  const restoredRootRef = useRef<string>("");
   const [explorerUserPath, setExplorerUserPath] = useState<string>("");
 
   const activeState = activeFile ? fileStateByPath[activeFile] : undefined;
   const fileText = activeState?.text ?? "";
   const dirty = activeState?.dirty ?? false;
   const fileInfo = activeState?.info ?? null;
+  const hasEditorContent = openTabs.length > 0;
 
   const termAreaWrapRef = useRef<HTMLDivElement | null>(null);
   const termDivRef = useRef<HTMLDivElement | null>(null);
@@ -445,6 +491,67 @@ export function App() {
   const splitGapPercent = 2;
 
   const terminalVisible = !isMobile || mobileTab === "terminal";
+  const visibleAiModeOptions = useMemo(
+    () => AI_MODE_OPTIONS.filter((option) => aiModeVisibility[option.id]),
+    [aiModeVisibility],
+  );
+  const firstVisibleAiMode = useMemo(
+    () => visibleAiModeOptions[0]?.id ?? null,
+    [visibleAiModeOptions],
+  );
+
+  useEffect(() => {
+    localStorage.setItem("vibego:visibleAiModes", JSON.stringify(aiModeVisibility));
+  }, [aiModeVisibility]);
+
+  useEffect(() => {
+    if (isAiMode(termMode) && !aiModeVisibility[termMode]) {
+      setTermMode(firstVisibleAiMode ?? "restricted");
+    }
+  }, [aiModeVisibility, firstVisibleAiMode, termMode]);
+
+  const focusTerminal = useCallback(() => {
+    termRef.current?.focus();
+    window.setTimeout(() => termRef.current?.focus(), 50);
+  }, []);
+
+  const activateTerminalMode = useCallback((mode: "restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor" | "cursor-cli") => {
+    if (mode === "restricted") {
+      setRestrictedNonce((n) => n + 1);
+    }
+    setTermMode(mode);
+    if (mode !== "cursor") {
+      focusTerminal();
+    }
+  }, [focusTerminal]);
+
+  const activateRoot = useCallback((root: string) => {
+    manualRootOverrideRef.current = true;
+    setActiveRoot(root);
+    setTerminalCwd(root);
+    setOpenTabs([]);
+    setActiveFile("");
+    setFileStateByPath({});
+    setEditorMode("edit");
+    setExplorerUserPath(root);
+  }, []);
+
+  const handlePickRoot = useCallback(async () => {
+    if (rootPickerLoading) return;
+    setRootPickerLoading(true);
+    try {
+      const res = await apiPickRoot(true);
+      setRoots(res.roots);
+      activateRoot(res.activeRoot);
+      setStatus(`已添加目录：${res.picked}`);
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      if (msg === "已取消选择目录" || msg === "未选择目录") return;
+      setStatus(`[错误] 选择目录: ${msg}`);
+    } finally {
+      setRootPickerLoading(false);
+    }
+  }, [activateRoot, rootPickerLoading]);
 
   const sendTermInput = useCallback((data: string) => {
     const term = termRef.current;
@@ -1158,37 +1265,11 @@ export function App() {
     return () => cancelAnimationFrame(id);
   }, [scrollToTerminalCwd, tree]);
 
-  // Restore last opened file from SQLite when activeRoot changes
   useEffect(() => {
-    if (!activeRoot) return;
-    if (restoredRootRef.current === activeRoot) return;
-    let cancelled = false;
-    const restoreFromPath = async (path: string) => {
-      if (!path.startsWith(activeRoot)) return;
-      const r = await apiRead(path);
-      if (cancelled) return;
-      setOpenTabs((prev) => (prev.includes(r.path) ? prev : [r.path]));
-      setActiveFile(r.path);
-      setFileStateByPath((prev) => ({
-        ...prev,
-        [r.path]: { text: r.text, dirty: false, info: { size: r.size, mtimeMs: r.mtimeMs } },
-      }));
-      setEditorMode("edit");
-    };
-
-    apiGetLastOpenedFile(activeRoot)
-      .then((res) => {
-        if (cancelled) return;
-        restoredRootRef.current = activeRoot;
-        if (res.filePath) return restoreFromPath(res.filePath);
-        const fallback = localStorage.getItem(`vibego:lastOpenedFile:${activeRoot}`);
-        if (fallback) return restoreFromPath(fallback);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRoot, activeFile, openTabs.length]);
+    if (!isMobile) return;
+    if (hasEditorContent) return;
+    if (mobileTab === "editor") setMobileTab("terminal");
+  }, [hasEditorContent, isMobile, mobileTab]);
 
   const toggleDir = async (node: TreeNode) => {
     suppressExplorerAutoScrollUntilRef.current = Date.now() + 1000;
@@ -1227,6 +1308,14 @@ export function App() {
       setTree((prev) => (prev ? updateNode(prev, node.path, (n) => ({ ...n, loading: false })) : prev));
     }
   };
+
+  const toggleExplorerDir = useCallback(async (node: TreeNode) => {
+    if (roots.includes(node.path) && node.path !== activeRoot) {
+      activateRoot(node.path);
+      return;
+    }
+    await toggleDir(node);
+  }, [activeRoot, activateRoot, roots]);
 
   const openFile = async (node: TreeNode) => {
     try {
@@ -1283,9 +1372,25 @@ export function App() {
         const nextActive = nextTabs[nextTabs.length - 1] ?? "";
         setActiveFile(nextActive);
       }
+      if (nextTabs.length === 0) {
+        if (!isMobile) setPanelEditorCollapsed(true);
+        else setMobileTab("terminal");
+      }
       return nextTabs;
     });
   };
+
+  const closeEditor = useCallback(() => {
+    const dirtyTabs = openTabs.filter((path) => fileStateByPath[path]?.dirty);
+    if (dirtyTabs.length > 0) {
+      const ok = window.confirm("有未保存的文件，仍要关闭编辑器吗？");
+      if (!ok) return;
+    }
+    setActiveFile("");
+    setOpenTabs([]);
+    setPanelEditorCollapsed(true);
+    if (isMobile) setMobileTab("terminal");
+  }, [fileStateByPath, isMobile, openTabs]);
 
   const refreshDirectoryInTree = useCallback(
     async (dirPath: string) => {
@@ -1936,103 +2041,104 @@ export function App() {
             minWidth: isMobile ? "auto" : panelExplorerCollapsed ? 48 : "200px",
           }}
         >
-          <div className="panelHeader" style={{ flexDirection: "column", alignItems: "stretch" }}>
-            <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-              {/* <h2>Files</h2> */}
-              {!isMobile && panelExplorerCollapsed && (
-                <span style={{ writingMode: "vertical-rl", fontSize: 12, color: "var(--muted)" }}>文件</span>
-              )}
-              {!panelExplorerCollapsed && (
-                <div className="row" style={{ marginLeft: "auto", gap: 8, alignItems: "center" }}>
-                {/* <a href="#/setup" className="setupLink" title="配置与安装指南" style={{ fontSize: 12, color: "var(--muted)" }}>
-                  安装指南
-                </a> */}
-                <button
-                  type="button"
-                  className="themeToggleBtn"
-                  onClick={toggleDarkMode}
-                  title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
-                  aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
-                >
-                  {isDarkMode ? "☀️" : "🌙"}
-                </button>
-                <select
-                    className="select"
-                    value={activeRoot}
-                    onChange={(e) => {
-                      manualRootOverrideRef.current = true;
-                      setActiveRoot(e.target.value);
-                      setTerminalCwd(e.target.value);
-                      setOpenTabs([]);
-                      setActiveFile("");
-                      setFileStateByPath({});
-                      setEditorMode("edit");
-                    setExplorerUserPath(e.target.value);
-                    }}
-                    disabled={roots.length === 0}
-                    title="根目录"
-                  >
-                    {roots.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              {!isMobile && (
-                <button
-                  type="button"
-                  className="panelCollapseBtn"
-                  onClick={() => setPanelExplorerCollapsed(!panelExplorerCollapsed)}
-                  title={panelExplorerCollapsed ? "展开文件目录" : "折叠文件目录"}
-                >
-                  {panelExplorerCollapsed ? "▶" : "◀"}
-                </button>
-              )}
+          <div className="panelHeader">
+            <div className="row" style={{ width: "100%", gap: 8, alignItems: "center" }}>
+              {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void handlePickRoot()}
+                title="新增项目"
+                disabled={rootPickerLoading}
+              >
+                {rootPickerLoading ? "新增中…" : "新增项目"}
+              </button>
+              <button
+                type="button"
+                className="segBtn"
+                onClick={createFolder}
+                disabled={!activeRoot}
+                title="新建文件夹"
+              >
+                📁+
+              </button>
+              <button
+                type="button"
+                className="segBtn"
+                onClick={createFile}
+                disabled={!activeRoot}
+                title="新建文件"
+              >
+                📄+
+              </button>
             </div>
-            {!panelExplorerCollapsed && (
-              <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                <button
-                  type="button"
-                  className="segBtn"
-                  onClick={createFolder}
-                  disabled={!activeRoot}
-                  title="新建文件夹"
-                >
-                  📁+
-                </button>
-                <button
-                  type="button"
-                  className="segBtn"
-                  onClick={createFile}
-                  disabled={!activeRoot}
-                  title="新建文件"
-                >
-                  📄+
-                </button>
-              </div>
-            )}
           </div>
           <div className="panelBody">
             <div className="fileList" ref={(el) => {
               if (el) fileListRef.current = el;
             }}>
-              {tree ? (
-                <TreeView
-                  node={tree}
-                  depth={0}
-                  activeFile={activeFile}
-                  onToggleDir={toggleDir}
-                  onOpenFile={openFile}
-                  onOpenTerminalDir={(n) => {
-                    addWorkspace(n.path);
-                    if (isMobile) setMobileTab("terminal");
-                  }}
-                />
-              ) : (
+              {roots.length > 0 ? (
+                roots.map((root) => {
+                  const node: TreeNode =
+                    root === activeRoot && tree
+                      ? tree
+                      : { path: root, name: baseName(root), type: "dir", expanded: false };
+                  return (
+                    <TreeView
+                      key={root}
+                      node={node}
+                      depth={0}
+                      activeFile={activeFile}
+                      onToggleDir={toggleExplorerDir}
+                      onOpenFile={openFile}
+                      onOpenTerminalDir={(n) => {
+                        addWorkspace(n.path);
+                        if (isMobile) setMobileTab("terminal");
+                      }}
+                    />
+                  );
+                })
+              ) : null}
+              {!tree && roots.length === 0 ? (
+                <div className="rootEmptyState">
+                  <div className="rootEmptyTitle">左侧先添加一个文件目录</div>
+                  <div className="rootEmptyHint">添加后，这里会显示目录树；终端和工作区也会基于该目录工作。</div>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => void handlePickRoot()}
+                      disabled={rootPickerLoading}
+                    >
+                      {rootPickerLoading ? "新增中…" : "新增项目"}
+                    </button>
+                  </div>
+                </div>
+              ) : !tree && roots.length > 0 ? (
                 <div className="fileMeta">{ready ? "加载中…" : "无根目录"}</div>
-              )}
+              ) : null}
+            </div>
+          </div>
+          <div className="panelSettings">
+            <div className="panelSettingsTitle">设置</div>
+            <div className="panelSettingsRow">
+              <button
+                type="button"
+                className="btn panelSettingsBtn"
+                onClick={() => setAiSettingsOpen(true)}
+                title="设置"
+              >
+                设置
+              </button>
+              <button
+                type="button"
+                className="themeToggleBtn panelSettingsBtn"
+                onClick={toggleDarkMode}
+                title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+                aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
+              >
+                {isDarkMode ? "浅色" : "深色"}
+              </button>
             </div>
           </div>
         </div>
@@ -2043,6 +2149,7 @@ export function App() {
 
         <div className="right" style={{ flex: isMobile ? undefined : 1 }} ref={rightPanelRef}>
           {/* Editor panel (inlined to avoid remount on collapse toggle) */}
+          {hasEditorContent ? (
           <div
             className={
               "panel" +
@@ -2108,36 +2215,16 @@ export function App() {
                     </div>
                   );
                 })}
-                {!isMobile && (
-                  <div className="row" style={{ marginLeft: "auto" }}>
-                    <button
-                      type="button"
-                      className="panelCollapseBtn"
-                      onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
-                      title="向左折叠编辑器"
-                    >
-                      ◀
-                    </button>
-                  </div>
-                )}
+                <div className="row" style={{ marginLeft: "auto" }}>
+                  <button className="segBtn" onClick={closeEditor} title="关闭编辑器">
+                    关闭
+                  </button>
+                </div>
               </div>
             ) : null}
 
             <div className="panelHeader">
               <h2>编辑器</h2>
-              {!isMobile && panelEditorCollapsed ? (
-                <span className="collapsedLabel">编辑器</span>
-              ) : null}
-              {!isMobile && panelEditorCollapsed ? (
-                <button
-                  type="button"
-                  className="panelCollapseBtn"
-                  onClick={() => setPanelEditorCollapsed(false)}
-                  title="展开编辑器"
-                >
-                  ▶
-                </button>
-              ) : null}
               <span className="fileMeta" title={activeFile}>
                 {activeFile ? baseName(activeFile) : "(无文件)"}
                 {dirty ? " *" : ""}
@@ -2197,7 +2284,8 @@ export function App() {
               )}
             </div>
           </div>
-          {!isMobile && !panelEditorCollapsed && !panelTerminalCollapsed && (
+          ) : null}
+          {!isMobile && hasEditorContent && !panelEditorCollapsed && !panelTerminalCollapsed && (
             <div className="resizerVertical" onMouseDown={() => setIsDraggingVertical(true)} title="拖拽调整大小" />
           )}
           {/* Terminal panel (inlined to avoid remount on collapse toggle) */}
@@ -2258,34 +2346,9 @@ export function App() {
                   </div>
                 ))
               )}
-              {!isMobile && (
-                <div className="row" style={{ marginLeft: "auto" }}>
-                  <button
-                    type="button"
-                    className="panelCollapseBtn"
-                    onClick={() => setPanelTerminalCollapsed(!panelTerminalCollapsed)}
-                    title={panelTerminalCollapsed ? "展开终端" : "向右折叠终端"}
-                  >
-                    {panelTerminalCollapsed ? "◀" : "▶"}
-                  </button>
-                </div>
-              )}
             </div>
             ) : null}
             <div className="panelHeader termPanelHeader">
-              {!isMobile && panelTerminalCollapsed ? (
-                <span className="collapsedLabel">终端</span>
-              ) : null}
-              {!isMobile && panelTerminalCollapsed ? (
-                <button
-                  type="button"
-                  className="panelCollapseBtn"
-                  onClick={() => setPanelTerminalCollapsed(false)}
-                  title="展开终端"
-                >
-                  ◀
-                </button>
-              ) : null}
               {!panelTerminalCollapsed ? (
                 <div className="termPanelHeaderRow">
                   <div className="segmented" aria-label="终端模式">
@@ -2337,7 +2400,7 @@ export function App() {
                     termRef.current?.focus();
                     setTimeout(() => termRef.current?.focus(), 50);
                   }}>
-                    Restricted
+                    终端
                   </button>
                 </div>
                   <div className="row" style={{ marginLeft: "auto" }}>
@@ -2511,7 +2574,11 @@ export function App() {
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
                 文件夹
               </button>
-              <button className={"tabBtn" + (mobileTab === "editor" ? " tabBtnActive" : "")} onClick={() => setMobileTab("editor")}>
+              <button
+                className={"tabBtn" + (mobileTab === "editor" ? " tabBtnActive" : "")}
+                onClick={() => setMobileTab("editor")}
+                disabled={!hasEditorContent}
+              >
                 编辑器
               </button>
               <button className={"tabBtn" + (mobileTab === "terminal" ? " tabBtnActive" : "")} onClick={() => setMobileTab("terminal")}>
@@ -2522,6 +2589,7 @@ export function App() {
 
           {ExplorerPanel}
           {/* Mobile editor panel (same structure as desktop, isMobile makes collapse btn hidden) */}
+          {hasEditorContent ? (
           <div
             className={"panel" + (isMobile && mobileTab !== "editor" ? " hidden" : "")}
             style={{ flex: 1 }}
@@ -2566,18 +2634,11 @@ export function App() {
                   </div>
                 );
               })}
-              {!isMobile && (
-                <div className="row" style={{ marginLeft: "auto" }}>
-                  <button
-                    type="button"
-                    className="panelCollapseBtn"
-                    onClick={() => setPanelEditorCollapsed(!panelEditorCollapsed)}
-                    title={panelEditorCollapsed ? "展开编辑器" : "向左折叠编辑器"}
-                  >
-                    {panelEditorCollapsed ? "▶" : "◀"}
-                  </button>
-                </div>
-              )}
+              <div className="row" style={{ marginLeft: "auto" }}>
+                <button className="btn" onClick={closeEditor} title="关闭编辑器">
+                  关闭
+                </button>
+              </div>
             </div>
             <div className="panelHeader">
               <h2>编辑器</h2>
@@ -2636,6 +2697,7 @@ export function App() {
               </div>
             )}
           </div>
+          ) : null}
           {/* Mobile terminal panel */}
           <div
             className={"panel" + (isMobile && mobileTab !== "terminal" ? " hidden" : "")}
@@ -2670,7 +2732,7 @@ export function App() {
                     setRestrictedNonce((n) => n + 1);
                     setTermMode("restricted");
                   }}>
-                    Restricted
+                    终端
                   </button>
                 </div>
                 {termMode !== "cursor" && (
@@ -2846,29 +2908,34 @@ export function App() {
               <label className="mobileWorkspaceDrawerRootLabel" htmlFor="mobileRootSelect">
                 根目录
               </label>
-              <select
-                id="mobileRootSelect"
-                className="select mobileWorkspaceDrawerRootSelect"
-                value={activeRoot}
-                onChange={(e) => {
-                  manualRootOverrideRef.current = true;
-                  setActiveRoot(e.target.value);
-                  setTerminalCwd(e.target.value);
-                  setOpenTabs([]);
-                  setActiveFile("");
-                  setFileStateByPath({});
-                  setEditorMode("edit");
-                  setExplorerUserPath(e.target.value);
-                }}
-                disabled={roots.length === 0}
-                title="根目录"
-              >
-                {roots.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
+              {roots.length > 0 ? (
+                <select
+                  id="mobileRootSelect"
+                  className="select mobileWorkspaceDrawerRootSelect"
+                  value={activeRoot}
+                  onChange={(e) => activateRoot(e.target.value)}
+                  title="根目录"
+                >
+                  {roots.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="mobileWorkspaceDrawerRootHint">还没有文件目录</div>
+              )}
+              <div className="rootAddBar rootAddBarMobile">
+                <span className="rootAddHint">通过系统目录选择器添加目录</span>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void handlePickRoot()}
+                  disabled={rootPickerLoading}
+                >
+                  {rootPickerLoading ? "新增中…" : "新增项目"}
+                </button>
+              </div>
             </div>
             <div className="mobileWorkspaceDrawerHeader">
               <h2 className="mobileWorkspaceDrawerTitle">工作区</h2>

@@ -184,7 +184,7 @@ async function checkCmdVersion(bin: string, args: string[] = ["--version"]) {
   }
 }
 
-type SetupInstallTool = "agent" | "rg" | "codex" | "claude" | "opencode";
+type SetupInstallTool = "agent" | "rg" | "codex" | "claude" | "opencode" | "kimi";
 
 function getInstallHint(tool: SetupInstallTool) {
   const hints = getInstallHintsByPlatform(tool);
@@ -219,6 +219,13 @@ function getInstallHintsByPlatform(tool: SetupInstallTool): { darwin: string; wi
       darwin: "curl -fsSL https://opencode.ai/install | bash (or: npm install -g opencode-ai)",
       win32: "npm install -g opencode-ai",
       linux: "curl -fsSL https://opencode.ai/install | bash (or: npm install -g opencode-ai)",
+    };
+  }
+  if (tool === "kimi") {
+    return {
+      darwin: "curl -LsSf https://code.kimi.com/install.sh | bash",
+      win32: "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression",
+      linux: "curl -LsSf https://code.kimi.com/install.sh | bash",
     };
   }
   // codex (same on all platforms)
@@ -274,6 +281,18 @@ async function canAutoInstall(tool: SetupInstallTool): Promise<{ ok: true } | { 
   if (tool === "opencode") {
     const hasNpm = Boolean(await whichBin(process.platform === "win32" ? "npm.cmd" : "npm")) || Boolean(await whichBin("npm"));
     if (!hasNpm) return { ok: false, reason: "npm not found. Install Node.js (includes npm) first." };
+    return { ok: true };
+  }
+
+  if (tool === "kimi") {
+    if (process.platform === "win32") {
+      const hasPs = Boolean(await whichBin("powershell"));
+      if (!hasPs) return { ok: false, reason: "Missing PowerShell (powershell.exe) in PATH" };
+      return { ok: true };
+    }
+    const hasCurl = Boolean(await whichBin("curl"));
+    const hasBash = Boolean(await whichBin("bash"));
+    if (!hasCurl || !hasBash) return { ok: false, reason: "Missing curl/bash. Install Kimi manually." };
     return { ok: true };
   }
 
@@ -337,6 +356,23 @@ async function runAutoInstall(tool: SetupInstallTool) {
     return await execa("npm", ["install", "-g", "opencode-ai"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
   }
 
+  if (tool === "kimi") {
+    if (process.platform === "win32") {
+      const cmd = "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression";
+      return await execa("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], {
+        timeout,
+        maxBuffer: 10 * 1024 * 1024,
+        env,
+      });
+    }
+    const cmd = "curl -LsSf https://code.kimi.com/install.sh | bash";
+    return await execa("bash", ["-lc", cmd], {
+      timeout,
+      maxBuffer: 10 * 1024 * 1024,
+      env,
+    });
+  }
+
   // codex
   return await execa("npm", ["i", "-g", "@openai/codex"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
 }
@@ -368,6 +404,56 @@ async function chooseDirectoryNative(promptText: string) {
   // linux: best-effort (requires zenity)
   const r = await execa("zenity", ["--file-selection", "--directory", "--title", promptText], { timeout: 300000 });
   return String(r.stdout || "").trim();
+}
+
+async function persistRootSelection(
+  rootRaw: string,
+  setActive: boolean,
+  rootsPath: string,
+  configPath: string,
+  setupDonePath: string,
+): Promise<{ roots: string[]; activeRoot: string; configPath: string; rootsPath: string }> {
+  const norm = (await normalizeRoots([rootRaw]))[0];
+
+  let existing = (await readRootsOverride(rootsPath)) ?? [];
+  if (existing.length === 0) {
+    try {
+      const raw = await fs.promises.readFile(configPath, "utf8");
+      const parsed = JSON.parse(raw) as any;
+      if (Array.isArray(parsed?.roots)) existing = parsed.roots.map(String);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const merged = Array.from(new Set([...existing, norm]));
+  await fs.promises.mkdir(path.dirname(rootsPath), { recursive: true });
+  await fs.promises.writeFile(rootsPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+
+  try {
+    await fs.promises.writeFile(
+      setupDonePath,
+      JSON.stringify({ doneAt: Date.now() }) + "\n",
+      "utf8",
+    );
+  } catch {}
+
+  const normalizedRoots = await normalizeRoots(merged);
+
+  if (setActive) {
+    try {
+      const db = await getDbModule();
+      db.setActiveRoot(norm);
+    } catch {}
+  }
+
+  let activeRoot: string = norm;
+  try {
+    const db = await getDbModule();
+    activeRoot = setActive ? norm : (db.getActiveRoot() ?? norm);
+  } catch {}
+
+  return { roots: normalizedRoots, activeRoot, configPath, rootsPath };
 }
 
 async function main() {
@@ -404,6 +490,15 @@ async function main() {
 
   // 不阻塞启动：在后台检测 Cursor Agent CLI，避免 checkAgentCli 卡住导致服务迟迟无法监听端口
   void checkAgentCli();
+  // 不阻塞启动：后台自动初始化 SQLite，避免把数据库初始化暴露成用户步骤
+  void getDbModule()
+    .then((db) => {
+      db.getDb();
+      console.log("[server] SQLite initialized");
+    })
+    .catch((e) => {
+      console.error("[server] SQLite auto-init failed:", (e as Error)?.message ?? String(e));
+    });
 
   const port = Number(cfg.server?.port ?? process.env.PORT ?? 3990);
   const timeoutSec = cfg.limits?.timeoutSec ?? 900;
@@ -482,6 +577,7 @@ async function main() {
       };
       // 避免 checkCmdVersion 内部未捕获的异常导致整次请求 500
       const tools = {
+        kimi: await checkOne("kimi"),
         opencode: await checkOne("opencode"),
         claude: await checkOne("claude"),
         codex: await checkOne("codex"),
@@ -512,6 +608,7 @@ async function main() {
         tools,
         cursorAppPaths,
         installHints: {
+          kimi: getInstallHintsByPlatform("kimi"),
           opencode: getInstallHintsByPlatform("opencode"),
           claude: getInstallHintsByPlatform("claude"),
           agent: getInstallHintsByPlatform("agent"),
@@ -554,7 +651,7 @@ async function main() {
     if (!isLocalReq(req)) return res.status(403).json({ ok: false, error: "仅允许本机访问" });
     try {
       const tool = String((req.body as any)?.tool ?? "") as SetupInstallTool;
-      if (tool !== "agent" && tool !== "rg" && tool !== "codex" && tool !== "claude" && tool !== "opencode") {
+      if (tool !== "agent" && tool !== "rg" && tool !== "codex" && tool !== "claude" && tool !== "opencode" && tool !== "kimi") {
         return res.status(400).json({ ok: false, error: "Invalid tool" });
       }
 
@@ -570,6 +667,8 @@ async function main() {
           ? await checkCmdVersion("agent", ["--version"])
           : tool === "rg"
             ? await checkCmdVersion("rg", ["--version"])
+            : tool === "kimi"
+              ? await checkCmdVersion("kimi", ["--version"])
             : tool === "claude"
               ? await checkCmdVersion("claude", ["--version"])
               : tool === "opencode"
@@ -624,51 +723,30 @@ async function main() {
       const rootRaw = String((req.body as any)?.root ?? "");
       const setActive = Boolean((req.body as any)?.setActive ?? true);
       if (!rootRaw) return res.status(400).json({ ok: false, error: "Missing root" });
-
-      // Validate it's a directory and normalize.
-      const norm = (await normalizeRoots([rootRaw]))[0];
-
-      // Prefer roots override file; fall back to config.json roots if present.
-      let existing = (await readRootsOverride(rootsPath)) ?? [];
-      if (existing.length === 0) {
-        try {
-          const raw = await fs.promises.readFile(configPath, "utf8");
-          const parsed = JSON.parse(raw) as any;
-          if (Array.isArray(parsed?.roots)) existing = parsed.roots.map(String);
-        } catch {
-          /* ignore */
-        }
-      }
-      const merged = Array.from(new Set([...existing, norm]));
-      await fs.promises.mkdir(path.dirname(rootsPath), { recursive: true });
-      await fs.promises.writeFile(rootsPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
-
-      // Mark setup as done (local flag file, git-ignored)
-      try {
-        await fs.promises.writeFile(
-          setupDonePath,
-          JSON.stringify({ doneAt: Date.now() }) + "\n",
-          "utf8",
-        );
-      } catch {}
-
-      // Refresh in-memory roots for this running server.
-      roots = await normalizeRoots(merged);
-
-      if (setActive) {
-        try {
-          const db = await getDbModule();
-          db.setActiveRoot(norm);
-        } catch {}
-      }
-
-      let activeRoot: string = norm;
-      try {
-        const db = await getDbModule();
-        activeRoot = setActive ? norm : (db.getActiveRoot() ?? norm);
-      } catch {}
-      res.json({ ok: true, roots, activeRoot, configPath, rootsPath });
+      const result = await persistRootSelection(rootRaw, setActive, rootsPath, configPath, setupDonePath);
+      roots = result.roots;
+      res.json({ ok: true, ...result });
     } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
+
+  app.post("/api/setup/pick-root", async (req, res) => {
+    if (!isLocalReq(req)) return res.status(403).json({ ok: false, error: "仅允许本机访问" });
+    const setActive = Boolean((req.body as any)?.setActive ?? true);
+    const promptText = String((req.body as any)?.prompt ?? "请选择允许 VibeGo 访问的目录");
+    try {
+      const picked = await chooseDirectoryNative(promptText);
+      if (!picked) {
+        return res.status(400).json({ ok: false, error: "未选择目录" });
+      }
+      const result = await persistRootSelection(picked, setActive, rootsPath, configPath, setupDonePath);
+      roots = result.roots;
+      res.json({ ok: true, picked, ...result });
+    } catch (e: any) {
+      if (e?.exitCode === 1 || e?.code === 1) {
+        return res.status(400).json({ ok: false, error: "已取消选择目录" });
+      }
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });

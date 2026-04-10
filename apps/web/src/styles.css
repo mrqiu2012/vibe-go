@@ -507,6 +507,32 @@ input {
   -webkit-overflow-scrolling: touch;
 }
 
+.panelSettings {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.panelSettingsTitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.panelSettingsRow {
+  display: flex;
+  gap: 8px;
+}
+
+.panelSettingsBtn {
+  flex: 1;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .right {
   display: flex;
   flex-direction: row;
@@ -585,6 +611,24 @@ input {
   padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.rootListRow {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+}
+
+.rootListRowActive {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.rootListPath {
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fileTreeNode {
@@ -715,6 +759,44 @@ input {
   color: var(--muted);
   font-size: 11px;
   font-family: var(--mono);
+}
+
+.rootAddBar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 0;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.rootAddHint {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rootEmptyState {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--panel2);
+}
+
+.rootEmptyTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rootEmptyHint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .term {
@@ -956,6 +1038,14 @@ input {
     padding: 8px 10px;
     font-size: 13px;
     font-family: var(--mono);
+  }
+  .mobileWorkspaceDrawerRootHint {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .rootAddBarMobile {
+    padding: 0;
+    margin-top: 2px;
   }
   .mobileWorkspaceDrawerHeader {
     display: flex;

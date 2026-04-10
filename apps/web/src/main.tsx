@@ -9,8 +9,9 @@ import { SetupPage } from "./ui/SetupPage";
 
 // Tencent vConsole: enable only when explicitly requested.
 if (localStorage.getItem("vconsole") === "1") {
-  const { default: VConsole } = await import("vconsole");
-  new VConsole();
+  void import("vconsole").then(({ default: VConsole }) => {
+    new VConsole();
+  });
 }
 
 // Monaco Editor 在布局变化（如切换 Codex/终端模式）时会取消内部异步操作并抛出 Canceled，属于预期行为，忽略即可
@@ -29,7 +30,6 @@ window.addEventListener("unhandledrejection", (event) => {
 
 function Root() {
   const [hash, setHash] = useState(() => window.location.hash || "#/");
-  const [setupChecked, setSetupChecked] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const isMainRoute = hash === "#/" || hash === "";
 
@@ -39,14 +39,12 @@ function Root() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  // 打开主页面时检测 config/.setup-done，没有则自动进入安装页
+  // 打开主页面时检测后端是否可用，但不再因为未配置根目录而强制跳转安装页。
   useEffect(() => {
     if (hash !== "#/setup" && !isMainRoute) {
-      setSetupChecked(true);
       return;
     }
     if (hash === "#/setup") {
-      setSetupChecked(true);
       return;
     }
     let cancelled = false;
@@ -75,14 +73,8 @@ function Root() {
         })
         .then((data) => {
           if (cancelled) return;
-          setSetupChecked(true);
-          const needSetup = data?.ok && (
-            data.setupDone === false ||
-            (Array.isArray(data.roots) && data.roots.length === 0)
-          );
-          if (needSetup) {
-            window.location.hash = "#/setup";
-            setHash("#/setup");
+          if (!data?.ok) {
+            throw new Error("Setup check failed");
           }
         })
         .catch((err: Error) => {
@@ -94,7 +86,6 @@ function Root() {
           } else {
             console.error("[setup/check] all retries failed. Backend may be down or returning 500:", msg);
             setSetupError(msg);
-            setSetupChecked(true);
           }
         });
     }

@@ -82,6 +82,26 @@ export async function apiSetActiveRoot(root: string) {
   );
 }
 
+export async function apiAddRoot(root: string, setActive = true) {
+  return j<{ ok: true; roots: string[]; activeRoot: string }>(
+    await fetch(apiUrl("/api/setup/add-root"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, setActive }),
+    })
+  );
+}
+
+export async function apiPickRoot(setActive = true, prompt = "请选择允许 VibeGo 访问的目录") {
+  return j<{ ok: true; roots: string[]; activeRoot: string; picked: string }>(
+    await fetch(apiUrl("/api/setup/pick-root"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ setActive, prompt }),
+    })
+  );
+}
+
 export async function apiList(path: string) {
   return j<{ ok: true; path: string; entries: FsEntry[] }>(await fetch(apiUrl(`/api/list?path=${encodeURIComponent(path)}`)));
 }
