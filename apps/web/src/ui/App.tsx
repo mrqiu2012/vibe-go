@@ -40,6 +40,10 @@ import {
   DERP_QUICK_GUIDE,
   type GenericInstallMethod,
 } from "./aiInstallSkill";
+import { useMobileUI, type MobilePage } from "../hooks/useMobileUI";
+import { MobileTopbar } from "../components/MobileTopbar";
+import { MobileBottomNav } from "../components/MobileBottomNav";
+import { MobileDrawer } from "../components/MobileDrawer";
 
 type TreeNode = {
   path: string;
@@ -1047,6 +1051,9 @@ export function App() {
   const [mobileTab, setMobileTab] = useState<"explorer" | "editor" | "terminal">("terminal");
   const [mobileWorkspaceDrawerOpen, setMobileWorkspaceDrawerOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
+  
+  // 新的移动端 UI 状态
+  const mobileUI = useMobileUI();
   const [leftWidth, setLeftWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
   const [topHeight, setTopHeight] = useState(49); // 终端区域宽度百分比（桌面端左右分栏）

@@ -1,751 +1,433 @@
 /**
- * 移动端优化样式
- * 作为资深产品经理、UI设计师和前端专家的完整移动端重构
+ * 移动端优化样式 - 增强版
+ * 优化现有移动端组件的样式
  */
 
-/* ============================================
-   1. 移动端设计系统变量
-   ============================================ */
-:root {
-  /* 移动端安全区域 */
-  --mobile-safe-top: env(safe-area-inset-top, 0px);
-  --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
-  
-  /* 移动端间距系统 */
-  --mobile-space-xs: 4px;
-  --mobile-space-sm: 8px;
-  --mobile-space-md: 12px;
-  --mobile-space-lg: 16px;
-  --mobile-space-xl: 20px;
-  
-  /* 移动端尺寸 */
-  --mobile-header-height: 48px;
-  --mobile-bottom-nav-height: 56px;
-  --mobile-tab-height: 40px;
-  
-  /* 移动端圆角 */
-  --mobile-radius-sm: 4px;
-  --mobile-radius-md: 8px;
-  --mobile-radius-lg: 12px;
-  
-  /* 移动端阴影 */
-  --mobile-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --mobile-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
-  --mobile-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
-}
-
-/* ============================================
-   2. 移动端基础布局
-   ============================================ */
 @media (max-width: 900px) {
-  /* 隐藏桌面端布局 */
-  .app {
-    display: none !important;
-  }
-  
-  /* 移动端主容器 */
-  .appMobile {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    height: 100dvh; /* 动态视口高度 */
-    width: 100vw;
-    overflow: hidden;
-    background: var(--bg);
-    position: relative;
-  }
-  
   /* ============================================
-     3. 顶部导航栏（优化版）
+     1. 顶部导航栏优化
      ============================================ */
-  .mobileTopbar {
+  .appMobile .topbar {
     display: flex;
     align-items: center;
-    gap: var(--mobile-space-sm);
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    padding-top: calc(var(--mobile-space-sm) + var(--mobile-safe-top));
-    height: calc(var(--mobile-header-height) + var(--mobile-safe-top));
+    gap: 8px;
+    padding: 8px 12px;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    height: calc(48px + env(safe-area-inset-top, 0px));
     background: var(--panel);
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
     position: relative;
-    z-index: 50;
   }
-  
-  /* 汉堡菜单按钮 */
-  .mobileMenuBtn {
+
+  /* 汉堡菜单按钮优化 */
+  .mobileSidebarToggle {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 36px;
     height: 36px;
     padding: 0;
-    border: none;
-    border-radius: var(--mobile-radius-md);
-    background: transparent;
+    border: none !important;
+    border-radius: 8px;
+    background: transparent !important;
     color: var(--text);
     font-size: 20px;
     cursor: pointer;
-    transition: background 0.15s ease;
     flex-shrink: 0;
+    transition: background 0.15s ease;
   }
-  
-  .mobileMenuBtn:active {
-    background: var(--hover);
+
+  .mobileSidebarToggle:active {
+    background: var(--hover) !important;
   }
-  
-  /* 项目名称 */
-  .mobileProjectName {
+
+  /* 项目名称优化 */
+  .mobileTopbarProjectName {
     flex: 1;
     min-width: 0;
-    font-size: 15px;
+    font-size: 15px !important;
     font-weight: 600;
-    color: var(--text);
+    font-family: inherit !important;
+    color: var(--text) !important;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    padding: 0 8px;
   }
-  
-  /* 顶部操作按钮 */
-  .mobileTopActions {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-xs);
-    flex-shrink: 0;
-  }
-  
-  .mobileIconBtn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border: none;
-    border-radius: var(--mobile-radius-md);
-    background: transparent;
-    color: var(--muted);
-    font-size: 16px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  
-  .mobileIconBtn:active {
-    background: var(--hover);
-    color: var(--text);
-  }
-  
+
   /* ============================================
-     4. 主内容区域
+     2. 底部 Tab 导航优化
      ============================================ */
-  .mobileContent {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
-  }
-  
-  .mobilePage {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-                opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  
-  .mobilePage.hidden {
-    opacity: 0;
-    pointer-events: none;
-    transform: translateX(20px);
-  }
-  
-  .mobilePage.active {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateX(0);
-    z-index: 1;
-  }
-  
-  /* ============================================
-     5. 文件浏览器页面
-     ============================================ */
-  .mobileFileBrowser {
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .mobileFileBrowserHeader {
+  .appMobile .tabs {
     display: flex;
     align-items: center;
-    gap: var(--mobile-space-sm);
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    gap: 4px;
+    margin-left: auto;
   }
-  
-  .mobileBreadcrumb {
-    flex: 1;
-    min-width: 0;
-    font-size: 13px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  
-  .mobileFileList {
-    flex: 1;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: var(--mobile-space-xs) 0;
-  }
-  
-  .mobileFileItem {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-md);
-    padding: var(--mobile-space-md);
-    margin: 0 var(--mobile-space-sm);
-    border-radius: var(--mobile-radius-md);
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  
-  .mobileFileItem:active {
-    background: var(--hover);
-  }
-  
-  .mobileFileItem.active {
-    background: rgba(37, 99, 235, 0.08);
-  }
-  
-  .mobileFileIcon {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--mobile-radius-sm);
-    background: var(--panel2);
-    color: var(--accent);
-    font-size: 14px;
-    flex-shrink: 0;
-  }
-  
-  .mobileFileInfo {
-    flex: 1;
-    min-width: 0;
-  }
-  
-  .mobileFileName {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  
-  .mobileFileMeta {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  
-  /* ============================================
-     6. 编辑器页面
-     ============================================ */
-  .mobileEditor {
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .mobileEditorHeader {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-sm);
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  
-  .mobileBackBtn {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-xs);
-    padding: var(--mobile-space-sm);
-    margin: calc(-1 * var(--mobile-space-sm)) calc(-1 * var(--mobile-space-sm));
-    margin-right: 0;
-    border: none;
-    background: transparent;
-    color: var(--accent);
-    font-size: 14px;
-    cursor: pointer;
-  }
-  
-  .mobileEditorTitle {
-    flex: 1;
-    min-width: 0;
-    font-size: 14px;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  
-  .mobileEditorActions {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-xs);
-  }
-  
-  .mobileEditorContent {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
-  }
-  
-  /* ============================================
-     7. 终端页面（优化版）
-     ============================================ */
-  .mobileTerminal {
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .mobileTerminalHeader {
-    display: flex;
-    flex-direction: column;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  
-  .mobileTerminalTabs {
-    display: flex;
-    gap: var(--mobile-space-xs);
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  
-  .mobileTerminalTabs::-webkit-scrollbar {
-    display: none;
-  }
-  
-  .mobileTerminalTab {
-    display: flex;
-    align-items: center;
-    gap: var(--mobile-space-xs);
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    border: none;
-    border-radius: var(--mobile-radius-md);
-    background: transparent;
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 500;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  
-  .mobileTerminalTab.active {
-    background: rgba(37, 99, 235, 0.1);
-    color: var(--accent);
-  }
-  
-  .mobileTerminalContent {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
-  }
-  
-  /* ============================================
-     8. 底部导航栏（全新设计）
-     ============================================ */
-  .mobileBottomNav {
-    display: flex;
-    align-items: center;
-    justify-content: space-around;
-    height: calc(var(--mobile-bottom-nav-height) + var(--mobile-safe-bottom));
-    padding-bottom: var(--mobile-safe-bottom);
-    background: var(--panel);
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    position: relative;
-    z-index: 50;
-  }
-  
-  .mobileNavItem {
+
+  .appMobile .tabBtn {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 2px;
-    flex: 1;
-    height: var(--mobile-bottom-nav-height);
-    padding: 0;
+    padding: 6px 12px;
     border: none;
+    border-radius: 8px;
     background: transparent;
     color: var(--muted);
     font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
     position: relative;
+    min-width: 56px;
   }
-  
-  .mobileNavItem.active {
-    color: var(--accent);
-  }
-  
-  .mobileNavItem.active::before {
+
+  .appMobile .tabBtn::before {
     content: '';
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 20px;
-    height: 3px;
-    background: var(--accent);
-    border-radius: 0 0 2px 2px;
-  }
-  
-  .mobileNavIcon {
-    font-size: 20px;
+    font-size: 16px;
     line-height: 1;
   }
-  
-  .mobileNavLabel {
-    font-size: 10px;
-    font-weight: 500;
+
+  .appMobile .tabBtn:nth-child(1)::before {
+    content: '📁';
   }
-  
+
+  .appMobile .tabBtn:nth-child(2)::before {
+    content: '📝';
+  }
+
+  .appMobile .tabBtn:nth-child(3)::before {
+    content: '💻';
+  }
+
+  .appMobile .tabBtn.tabBtnActive {
+    color: var(--accent);
+    background: rgba(37, 99, 235, 0.08);
+  }
+
+  .appMobile .tabBtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   /* ============================================
-     9. 侧边抽屉（优化版）
+     3. 面板内容区域优化
      ============================================ */
-  .mobileDrawerOverlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 100;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.25s ease, visibility 0.25s ease;
+  .appMobile .panel {
+    border-radius: 0;
+    border: none;
+    background: var(--bg);
   }
-  
-  .mobileDrawerOverlay.open {
-    opacity: 1;
-    visibility: visible;
-  }
-  
-  .mobileDrawer {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: min(320px, 85vw);
+
+  .appMobile .panelHeader {
+    padding: 10px 12px;
     background: var(--panel);
-    box-shadow: var(--mobile-shadow-lg);
-    z-index: 101;
-    transform: translateX(-100%);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .mobileDrawer.open {
-    transform: translateX(0);
-  }
-  
-  .mobileDrawerHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--mobile-space-md);
-    padding-top: calc(var(--mobile-space-md) + var(--mobile-safe-top));
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
   }
-  
-  .mobileDrawerTitle {
-    font-size: 17px;
-    font-weight: 600;
+
+  .appMobile .panelBody {
+    padding: 0;
   }
-  
-  .mobileDrawerClose {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: var(--mobile-radius-md);
-    background: var(--panel2);
-    color: var(--muted);
-    font-size: 18px;
-    cursor: pointer;
-  }
-  
-  .mobileDrawerContent {
-    flex: 1;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: var(--mobile-space-md);
-  }
-  
+
   /* ============================================
-     10. 浮动操作按钮（FAB）
+     4. 文件浏览器优化
      ============================================ */
-  .mobileFab {
-    position: fixed;
-    right: var(--mobile-space-lg);
-    bottom: calc(var(--mobile-bottom-nav-height) + var(--mobile-safe-bottom) + var(--mobile-space-lg));
-    width: 56px;
-    height: 56px;
-    border: none;
-    border-radius: 50%;
-    background: var(--accent);
-    color: white;
-    font-size: 24px;
-    box-shadow: var(--mobile-shadow-md);
-    cursor: pointer;
-    z-index: 40;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  .appMobile .fileList {
+    padding: 8px;
   }
-  
-  .mobileFab:active {
-    transform: scale(0.95);
-    box-shadow: var(--mobile-shadow-sm);
+
+  .appMobile .fileRow {
+    padding: 12px;
+    margin: 4px 8px;
+    border-radius: 8px;
+    transition: background 0.15s ease;
   }
-  
-  /* ============================================
-     11. 快速操作栏
-     ============================================ */
-  .mobileQuickActions {
-    position: fixed;
-    left: var(--mobile-space-md);
-    right: var(--mobile-space-md);
-    bottom: calc(var(--mobile-bottom-nav-height) + var(--mobile-safe-bottom) + var(--mobile-space-md));
-    display: flex;
-    gap: var(--mobile-space-sm);
-    padding: var(--mobile-space-sm);
-    background: var(--panel);
-    border-radius: var(--mobile-radius-lg);
-    box-shadow: var(--mobile-shadow-lg);
-    z-index: 40;
-    transform: translateY(calc(100% + 20px));
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  
-  .mobileQuickActions.open {
-    transform: translateY(0);
-  }
-  
-  .mobileQuickActionBtn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--mobile-space-xs);
-    padding: var(--mobile-space-md);
-    border: none;
-    border-radius: var(--mobile-radius-md);
-    background: transparent;
-    color: var(--text);
-    font-size: 12px;
-    cursor: pointer;
-  }
-  
-  .mobileQuickActionBtn:active {
+
+  .appMobile .fileRow:active {
     background: var(--hover);
   }
-  
+
+  .appMobile .fileRowActive {
+    background: rgba(37, 99, 235, 0.08);
+  }
+
+  .appMobile .fileName {
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .appMobile .fileMeta {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
   /* ============================================
-     12. 终端控制栏（优化版）
+     5. 编辑器标签页优化
      ============================================ */
-  .mobileTermControls {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
+  .appMobile .tabStrip {
+    padding: 8px;
+    gap: 4px;
     background: var(--panel);
-    border-top: 1px solid var(--border);
-    padding: var(--mobile-space-sm);
-    padding-bottom: calc(var(--mobile-space-sm) + env(keyboard-inset-height, 0px));
-    z-index: 10;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
-  
-  .mobileTermKeys {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: var(--mobile-space-xs);
-    margin-bottom: var(--mobile-space-xs);
+
+  .appMobile .tabStrip::-webkit-scrollbar {
+    display: none;
   }
-  
-  .mobileTermKey {
-    padding: var(--mobile-space-sm);
-    border: 1px solid var(--border);
-    border-radius: var(--mobile-radius-sm);
+
+  .appMobile .fileTab {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
     background: var(--panel2);
-    color: var(--text);
-    font-family: var(--mono);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    max-width: 140px;
+  }
+
+  .appMobile .fileTabActive {
+    background: rgba(37, 99, 235, 0.08);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .appMobile .tabClose {
+    width: 18px;
+    height: 18px;
+    font-size: 14px;
+    opacity: 0.6;
+  }
+
+  /* ============================================
+     6. 终端区域优化
+     ============================================ */
+  .appMobile .termPanelHeader {
+    padding: 8px 12px;
+  }
+
+  .appMobile .termPanelHeaderRow {
+    gap: 8px;
+  }
+
+  /* 终端模式选择器优化 */
+  .appMobile .termPanelHeaderRow .segmented {
+    gap: 4px;
+    border: none;
+    background: transparent;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 4px 0;
+  }
+
+  .appMobile .termPanelHeaderRow .segmented::-webkit-scrollbar {
+    display: none;
+  }
+
+  .appMobile .termPanelHeaderRow .segBtn {
+    padding: 6px 12px;
+    border-radius: 6px;
     font-size: 12px;
     font-weight: 500;
-    text-align: center;
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
+    white-space: nowrap;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    margin: 0;
+    border-bottom: none;
   }
-  
-  .mobileTermKey:active {
+
+  .appMobile .termPanelHeaderRow .segBtn.segBtnActive {
     background: var(--accent);
     color: white;
     border-color: var(--accent);
   }
-  
-  .mobileTermInputRow {
-    display: flex;
-    gap: var(--mobile-space-xs);
+
+  /* ============================================
+     7. 终端控制按钮优化
+     ============================================ */
+  .appMobile .termMobileControls {
+    padding: 8px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
   }
-  
-  .mobileTermInput {
-    flex: 1;
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    border: 1px solid var(--border);
-    border-radius: var(--mobile-radius-md);
+
+  .appMobile .termMobileKeysRow {
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .appMobile .termMobileKeyBtn {
+    padding: 10px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
     background: var(--panel2);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 14px;
+    border: 1px solid var(--border);
+    transition: all 0.15s ease;
   }
-  
-  .mobileTermSendBtn {
-    padding: var(--mobile-space-sm) var(--mobile-space-md);
-    border: none;
-    border-radius: var(--mobile-radius-md);
+
+  .appMobile .termMobileKeyBtn:active {
     background: var(--accent);
     color: white;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
+    border-color: var(--accent);
   }
-  
+
   /* ============================================
-     13. Toast 提示（优化版）
+     8. 工作区抽屉优化
      ============================================ */
-  .mobileToast {
+  .mobileWorkspaceDrawer {
+    width: min(320px, 85vw);
+    background: var(--panel);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.2);
+  }
+
+  .mobileWorkspaceDrawerHeader {
+    padding: 16px;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mobileWorkspaceDrawerTitle {
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  .mobileWorkspaceDrawerClose {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--panel2);
+    border: none;
+    font-size: 20px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .mobileWorkspaceDrawerClose:active {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .mobileWorkspaceDrawerList {
+    padding: 12px;
+  }
+
+  .mobileWorkspaceDrawerList .workspaceTab {
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: background 0.15s ease;
+  }
+
+  .mobileWorkspaceDrawerList .workspaceTab:active {
+    background: var(--hover);
+  }
+
+  /* ============================================
+     9. 按钮和交互元素优化
+     ============================================ */
+  .appMobile .btn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .appMobile .btn:active {
+    transform: scale(0.98);
+  }
+
+  .appMobile .segBtn {
+    transition: all 0.15s ease;
+  }
+
+  .appMobile .segBtn:active {
+    transform: scale(0.98);
+  }
+
+  /* ============================================
+     10. Toast 提示优化
+     ============================================ */
+  .appMobile .toast {
     position: fixed;
-    top: calc(var(--mobile-header-height) + var(--mobile-safe-top) + var(--mobile-space-md));
+    top: calc(48px + env(safe-area-inset-top, 0px) + 12px);
     left: 50%;
-    transform: translateX(-50%) translateY(-20px);
-    padding: var(--mobile-space-md) var(--mobile-space-lg);
+    transform: translateX(-50%);
+    padding: 12px 20px;
     background: rgba(30, 41, 59, 0.95);
     color: white;
     font-size: 14px;
-    border-radius: var(--mobile-radius-lg);
-    box-shadow: var(--mobile-shadow-lg);
-    z-index: 200;
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.3s ease;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
   }
-  
-  .mobileToast.show {
-    opacity: 1;
-    visibility: visible;
-    transform: translateX(-50%) translateY(0);
-  }
-  
+
   /* ============================================
-     14. 手势滑动区域
+     11. 空状态优化
      ============================================ */
-  .mobileSwipeArea {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 20px;
-    z-index: 5;
-  }
-  
-  .mobileSwipeArea.left {
-    left: 0;
-  }
-  
-  .mobileSwipeArea.right {
-    right: 0;
-  }
-  
-  /* ============================================
-     15. 空状态
-     ============================================ */
-  .mobileEmptyState {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--mobile-space-xl);
+  .appMobile .rootEmptyState {
+    padding: 40px 24px;
     text-align: center;
-    color: var(--muted);
   }
-  
-  .mobileEmptyIcon {
-    font-size: 48px;
-    margin-bottom: var(--mobile-space-md);
-    opacity: 0.5;
-  }
-  
-  .mobileEmptyTitle {
+
+  .appMobile .rootEmptyTitle {
     font-size: 16px;
     font-weight: 600;
     color: var(--text);
-    margin-bottom: var(--mobile-space-sm);
+    margin-bottom: 8px;
   }
-  
-  .mobileEmptyDesc {
-    font-size: 14px;
+
+  .appMobile .rootEmptyHint {
+    font-size: 13px;
+    color: var(--muted);
     line-height: 1.5;
   }
-}
 
-/* ============================================
-   16. 深色模式适配
-   ============================================ */
-@media (max-width: 900px) and (prefers-color-scheme: dark) {
-  .mobileToast {
-    background: rgba(255, 255, 255, 0.95);
-    color: var(--text);
+  /* ============================================
+     12. 滚动优化
+     ============================================ */
+  .appMobile {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .appMobile * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ============================================
+     13. 深色模式适配
+     ============================================ */
+  @media (prefers-color-scheme: dark) {
+    .appMobile .toast {
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--text);
+    }
   }
 }
 
 /* ============================================
-   17. 横屏模式优化
+   14. 横屏模式优化
    ============================================ */
 @media (max-width: 900px) and (orientation: landscape) {
-  .mobileBottomNav {
-    height: calc(48px + var(--mobile-safe-bottom));
+  .appMobile .topbar {
+    height: calc(40px + env(safe-area-inset-top, 0px));
   }
-  
-  .mobileNavItem {
-    height: 48px;
+
+  .appMobile .tabBtn {
     flex-direction: row;
-    gap: var(--mobile-space-sm);
+    gap: 6px;
+    padding: 6px 16px;
   }
-  
-  .mobileNavIcon {
-    font-size: 18px;
-  }
-  
-  .mobileNavLabel {
-    font-size: 12px;
+
+  .appMobile .tabBtn::before {
+    font-size: 14px;
   }
 }
