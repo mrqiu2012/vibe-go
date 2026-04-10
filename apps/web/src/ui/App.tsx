@@ -30,6 +30,7 @@ import {
 } from "../api";
 import { TermClient, type TermServerMsg } from "../wsTerm";
 import { CursorChatPanel } from "./CursorChatPanel";
+import { AI_INSTALL_GUIDES, getInstallCommand, detectPlatform } from "./aiInstallSkill";
 
 type TreeNode = {
   path: string;
@@ -3154,7 +3155,53 @@ export function App() {
                 </label>
               ))}
             </div>
-            <div className="pasteModalActions">
+            <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+              <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 600 }}>
+                <i className="fas fa-download" style={{ marginRight: 6, color: "#3b82f6" }}></i>
+                手动安装指南
+              </h4>
+              <div style={{ maxHeight: 200, overflow: "auto" }}>
+                {AI_INSTALL_GUIDES.map((tool) => {
+                  const platform = detectPlatform();
+                  const command = getInstallCommand(tool, platform);
+                  return (
+                    <div key={tool.id} style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>
+                        {tool.name}
+                        <span className="fileMeta" style={{ marginLeft: 8, fontSize: 11 }}>
+                          {tool.description}
+                        </span>
+                      </div>
+                      {command && (
+                        <code
+                          style={{
+                            display: "block",
+                            padding: "6px 8px",
+                            background: "var(--panel2)",
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontFamily: "var(--mono)",
+                            wordBreak: "break-all",
+                            cursor: "pointer",
+                          }}
+                          title="点击复制"
+                          onClick={() => {
+                            navigator.clipboard.writeText(command);
+                            setStatus(`已复制 ${tool.name} 安装命令`);
+                          }}
+                        >
+                          {command}
+                        </code>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="fileMeta" style={{ marginTop: 8, fontSize: 11 }}>
+                点击命令可复制到剪贴板，在终端中粘贴执行
+              </p>
+            </div>
+            <div className="pasteModalActions" style={{ marginTop: 16 }}>
               <button
                 type="button"
                 className="btn"
