@@ -2120,7 +2120,6 @@ export function App() {
             </div>
           </div>
           <div className="panelSettings">
-            <div className="panelSettingsTitle">设置</div>
             <div className="panelSettingsRow">
               <button
                 type="button"
