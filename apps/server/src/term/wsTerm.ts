@@ -92,7 +92,6 @@ export function attachTermWs(opts: {
     });
     const customCliMgr = new CustomCliManager({
       maxSessions: opts.maxSessions,
-      limits: opts.limits,
       validateCwd: opts.validateCwd,
       send: (m) => send(ws, m as TermServerMsg),
     });
@@ -122,7 +121,7 @@ export function attachTermWs(opts: {
           const cwd = (msg as any).cwd;
           const cols = Number((msg as any).cols ?? 120);
           const rows = Number((msg as any).rows ?? 30);
-          const mode = String((msg as any).mode ?? "restricted") as "restricted" | "native" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
+          const mode = String((msg as any).mode ?? "restricted") as "restricted" | "native" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "custom";
           const options = (msg as any).options;
           if (typeof cwd !== "string" || cwd.length === 0) return fail("term.open", "Missing cwd");
           if (!Number.isFinite(cols) || !Number.isFinite(rows)) return fail("term.open", "Invalid cols/rows");
@@ -198,16 +197,13 @@ export function attachTermWs(opts: {
             } catch (e: any) {
               return fail("term.open", `Kimi CLI failed: ${e?.message ?? String(e)}`);
             }
-          } else if (mode.startsWith("custom:")) {
-            // Custom CLI mode: custom:<command>:<args>
+          } else if (mode === "custom") {
             try {
-              const parts = mode.slice(7).split(":");
-              const command = parts[0];
-              const args = parts.slice(1).join(":").split(" ").filter(Boolean);
-              if (!command) {
-                return fail("term.open", "Invalid custom CLI command");
-              }
-              const s = await customCliMgr.open(realCwd, cols, rows, command, args);
+              const command = String(options?.customCli?.command ?? "").trim();
+              const argsTextRaw = options?.customCli?.argsText;
+              const argsText = typeof argsTextRaw === "string" ? argsTextRaw.trim() : "";
+              if (!command) return fail("term.open", "Missing custom CLI command");
+              const s = await customCliMgr.open(realCwd, cols, rows, command, argsText || undefined);
               send(ws, { t: "term.open.resp", reqId, ok: true, sessionId: s.id, cwd: s.cwd });
             } catch (e: any) {
               return fail("term.open", `Custom CLI failed: ${e?.message ?? String(e)}`);

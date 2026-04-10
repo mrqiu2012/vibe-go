@@ -40,7 +40,12 @@ const server = spawn("pnpm", ["--filter", "@vibego/server", "dev"], {
   shell: true,
   env: {
     ...process.env,
-    PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || ""}`,
+    PATH: [
+      process.platform === "win32" ? "" : path.join(process.env.HOME || "", ".local", "bin"),
+      process.env.PATH || "",
+    ]
+      .filter(Boolean)
+      .join(path.delimiter),
   },
 });
 

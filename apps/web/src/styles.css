@@ -238,6 +238,25 @@ input {
   display: none !important;
 }
 
+/* 折叠状态下品牌区域只显示图标 */
+.panelExplorerCollapsed .panelHeader .brand {
+  flex-direction: column;
+  gap: 4px;
+  margin-right: 0;
+}
+
+.panelExplorerCollapsed .panelHeader .brand i {
+  font-size: 16px !important;
+  width: 30px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+
+.panelExplorerCollapsed .panelHeader .brand span {
+  display: none !important;
+}
+
 .panelExplorerCollapsed .panelHeader .panelCollapseBtn {
   display: inline-flex;
 }

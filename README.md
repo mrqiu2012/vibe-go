@@ -1,24 +1,26 @@
 # VibeGo
 
 **中文**  
-VibeGo 是一款本机两段式 Web IDE：目录树 + 文件编辑器 + 受限终端，并集成 Cursor CLI（`agent`）、Codex CLI、Claude Code CLI（`claude`）、OpenCode CLI（`opencode`）与 Kimi CLI（`kimi`）。
+VibeGo 是一款面向本机运行的 AI 编程工作台：提供目录树、文件编辑、终端与多种 AI CLI 接入，让你在本地环境里看代码、发指令、执行修改。内置支持 Cursor CLI（`agent`）、Codex CLI、Claude Code CLI（`claude`）、OpenCode CLI（`opencode`）与 Kimi CLI（`kimi`）。
 
 **English**  
-VibeGo is a local two-panel Web IDE: file tree + editor + restricted terminal, with Cursor CLI (`agent`), Codex CLI, Claude Code CLI (`claude`), OpenCode CLI (`opencode`), and Kimi CLI (`kimi`) integration.
+VibeGo is a local AI coding workspace: it combines file browsing, editing, terminal access, and multiple AI CLIs so you can inspect code, issue instructions, and execute changes in your local environment. It integrates Cursor CLI (`agent`), Codex CLI, Claude Code CLI (`claude`), OpenCode CLI (`opencode`), and Kimi CLI (`kimi`).
 
 ---
 
 **中文 | 主要特性**
 
-- 本地目录树与文件编辑器
-- 受限终端（Restricted / Codex / Claude / OpenCode / Kimi / Cursor 模式）
+- 本地 AI 编程工作流，核心是“本机执行 + AI CLI 协作”
+- 本地目录树、文件编辑与终端
+- 多种 AI CLI 模式（Restricted / Codex / Claude / OpenCode / Kimi / Cursor）
 - 前后端分离，开发态端口清晰
 - Windows 兼容（CLI 路径查找、PTY 行为优化）
 
 **English | Highlights**
 
-- Local file tree and editor
-- Restricted terminal modes (Restricted / Codex / Claude / OpenCode / Kimi / Cursor)
+- Local AI coding workflow centered on local execution plus AI CLI collaboration
+- Local file tree, editor, and terminal
+- Multiple AI CLI modes (Restricted / Codex / Claude / OpenCode / Kimi / Cursor)
 - Clear dev ports with separated frontend/backend
 - Windows-friendly CLI path handling and PTY behavior
 
@@ -81,7 +83,7 @@ VITE_API_BASE="http://<server-ip>:3990" pnpm dev
 ```
 
 **远程使用（Remote Vibe Coding）**  
-在电脑上启动 VibeGo 后，可用 [Tailscale](https://tailscale.com) 等组网工具，从手机或另一台设备访问本机服务，实现远程编程（vibe coding）。
+在电脑上启动 VibeGo 后，可用 [Tailscale](https://tailscale.com) 等组网工具，从手机或另一台设备访问本机服务，远程连接你的本地 AI 编程工作台。
 
 1. 在本机安装并登录 Tailscale，记下本机的 Tailscale IP（如 `100.x.x.x`）。
 2. 本机运行 `pnpm dev`，确保终端里显示的端口（如 3990、5173）可被本机访问。
@@ -91,7 +93,7 @@ VITE_API_BASE="http://<server-ip>:3990" pnpm dev
 4. 前端会请求后端 API；若前后端分离，需让前端指向后端地址，例如在启动时设置：  
    `VITE_API_BASE="http://<本机-Tailscale-IP>:3990"` 再 `pnpm dev`，这样手机打开 5173 时就会连到本机的 3990。
 
-这样即可在手机或平板上用 Cursor 聊天、看代码、发指令，在本机执行，实现远程 vibe coding。
+这样即可在手机或平板上看代码、与 AI 交互、发起本地命令，并让所有实际执行仍发生在你的电脑上。
 
 5. 安装 CLI（可选但推荐）
 
@@ -312,7 +314,7 @@ opencode --version
 
 - VibeGo spawns local terminal subprocesses; each CLI binary must be **on PATH** for the **same user** that runs VibeGo, in the default shell.
 - After install or upgrade, **restart the terminal** (or run `hash -r` / reload shell config), then verify with `which <cmd>` (macOS/Linux) or `where.exe <cmd>` (Windows).
-- In the web terminal, pick the mode that matches the CLI (e.g. Codex / Claude / Cursor). **Restricted** mode does not assume vendor CLIs.
+- In the web terminal, pick the mode that matches the CLI (e.g. Codex / Claude / Cursor). **Restricted** mode does not assume vendor CLIs; it is the safe baseline for local command execution.
 - Run `<cmd> --version` at least once after install; if “command not found”, check PATH, npm/pnpm global prefix, and that you installed into the same environment as this shell.
 - Login, workspace trust, proxies, and network rules follow **each vendor’s docs**; this README only covers common install and PATH troubleshooting.
 
@@ -342,7 +344,7 @@ curl http://localhost:3990/api/roots
 ```
 
 8. Setup note  
-You can skip DB initialization to enter the app, but chat/workspace features may be unavailable or error.
+You can skip DB initialization to enter the app, but chat/session history and workspace-related features may be unavailable or error.
 
 ---
 

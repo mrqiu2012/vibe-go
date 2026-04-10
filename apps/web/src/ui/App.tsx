@@ -1166,7 +1166,7 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const termClientRef = useRef<TermClient | null>(null);
   const termSessionIdRef = useRef<string>("");
-  const termSessionModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "native" | "">("");
+  const termSessionModeRef = useRef<"restricted" | "codex" | "claude" | "opencode" | "kimi" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "native" | "custom" | "">("");
   const termSessionIsPtyRef = useRef(false);
   const termPendingStdinRef = useRef<string>(""); // buffer keystrokes before a session is ready
   // Buffer term.data that arrives before term.open.resp (sessionId not set yet) so we don't drop initial output
@@ -2488,12 +2488,14 @@ export function App() {
           termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
           term.write(`\r\n[cursor-cli 已退出 ${m.code ?? "?"}]\r\n`);
-        } else if (sessionMode?.startsWith("custom:")) {
+        } else if (sessionMode === "custom") {
           termSessionIdRef.current = "";
           termSessionModeRef.current = "";
           termSessionIsPtyRef.current = false;
           cursorPromptNudgedRef.current = false;
-          const cliName = sessionMode.slice(7).split(":")[0];
+          const cliName = termModeRef.current.startsWith("custom:")
+            ? (customClis.find((cli) => cli.id === termModeRef.current)?.label ?? "custom CLI")
+            : "custom CLI";
           term.write(`\r\n[${cliName} 已退出 ${m.code ?? "?"}]\r\n`);
         } else if (sessionMode === "restricted" && termSessionIsPtyRef.current) {
           termSessionIdRef.current = "";
@@ -2643,9 +2645,9 @@ export function App() {
           await client.closeSession(old).catch(() => {});
         }
         
-        // Determine actual mode for WebSocket
-        // Map cursor-cli modes to the backend modes: cursor-cli-agent/plan/ask
-        // Custom CLI modes are sent as custom:<command>:<args>
+        // Determine actual mode for WebSocket.
+        // Map cursor-cli modes to the backend modes: cursor-cli-agent/plan/ask.
+        // Custom CLI metadata is sent structurally to preserve spaces, quotes, and Windows paths.
         let actualMode:
           | "restricted"
           | "native"
@@ -2656,24 +2658,39 @@ export function App() {
           | "cursor-cli-agent"
           | "cursor-cli-plan"
           | "cursor-cli-ask"
-          | string; // Allow custom CLI modes
+          | "custom";
+        let openOptions:
+          | {
+              prompt?: string;
+              resume?: string;
+              customCli?: {
+                command: string;
+                argsText?: string;
+              };
+            }
+          | undefined;
         if (termMode === "cursor-cli") {
           actualMode = `cursor-cli-${cursorCliMode}` as
             | "cursor-cli-agent"
             | "cursor-cli-plan"
             | "cursor-cli-ask";
         } else if (termMode.startsWith("custom:")) {
-          // Custom CLI: find the config and build mode string
+          // Custom CLI: find the config and send raw args without string-encoding into mode.
           const customId = termMode;
           const cliConfig = customClis.find((c) => c.id === customId);
           if (cliConfig) {
-            const argsStr = cliConfig.args ? `:${cliConfig.args.replace(/\s+/g, ":")}` : "";
-            actualMode = `custom:${cliConfig.command}${argsStr}`;
+            actualMode = "custom";
+            openOptions = {
+              customCli: {
+                command: cliConfig.command,
+                argsText: cliConfig.args,
+              },
+            };
           } else {
-            actualMode = termMode;
+            throw new Error("custom CLI config not found");
           }
         } else {
-          actualMode = termMode; // termMode here is "restricted" | "codex" | "claude" | "opencode"
+          actualMode = termMode;
         }
         logTerm("actualMode", { actualMode });
         
@@ -2684,7 +2701,7 @@ export function App() {
           term.write(`\r\n[会话] 正在打开 ${terminalCwd}\r\n`);
         }
 
-        const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode);
+        const resp = await client.open(terminalCwd, term.cols, term.rows, actualMode, openOptions);
         if (!resp.ok || !resp.sessionId) throw new Error(resp.error ?? "term.open failed");
         termSessionIdRef.current = resp.sessionId;
         termSessionModeRef.current = actualMode;
@@ -2696,7 +2713,7 @@ export function App() {
           actualMode === "cursor-cli-agent" ||
           actualMode === "cursor-cli-plan" ||
           actualMode === "cursor-cli-ask" ||
-          actualMode.startsWith("custom:") ||
+          actualMode === "custom" ||
           (actualMode === "restricted" && resp.mode === "restricted-pty");
         termSessionIsPtyRef.current = isPtySession;
         lastOpenKeyRef.current = openKey;
@@ -2840,7 +2857,15 @@ export function App() {
           }}
         >
           <div className="panelHeader">
-            <div className="row" style={{ width: "100%", gap: 8, alignItems: "center" }}>
+            <div className="row" style={{ width: "100%", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {/* 品牌标识 */}
+              <div className="brand" style={{ display: "flex", alignItems: "center", gap: 8, marginRight: "auto" }}>
+                <i className="fas fa-terminal" style={{ color: "#fff", fontSize: 14, background: "#3b82f6", borderRadius: 6, width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center" }}></i>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)", lineHeight: 1.2 }}>VibeGo</span>
+                  <span style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.2 }}>Code Everywhere</span>
+                </div>
+              </div>
               {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
               <button
                 type="button"
@@ -2932,7 +2957,7 @@ export function App() {
                 onClick={() => setAiSettingsOpen(true)}
                 title="设置"
               >
-                <i className="fas fa-cog" style={{ marginRight: 6, color: "#8b5cf6" }}></i>设置
+                <i className="fas fa-cog" style={{ marginRight: 6, color: "#3b82f6" }}></i>设置
               </button>
               <button
                 type="button"
@@ -3125,34 +3150,6 @@ export function App() {
               minHeight: isMobile ? "65dvh" : undefined,
             }}
           >
-            {!panelTerminalCollapsed ? (
-            <div className="workspaceTabStrip">
-              {workspaces.length === 0 ? (
-                <div className="workspaceEmpty">点击文件夹的「Go」按钮打开工作区</div>
-              ) : (
-                workspaces.map((ws) => (
-                  <div
-                    key={ws.id}
-                    className={"workspaceTab" + (ws.id === activeWorkspaceId ? " workspaceTabActive" : "")}
-                    onClick={() => switchWorkspace(ws.id)}
-                    title={ws.cwd}
-                  >
-                    <span className="workspaceTabName">{ws.name}</span>
-                    <button
-                      className="workspaceTabClose"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeWorkspace(ws.id);
-                      }}
-                      title="关闭工作区"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            ) : null}
             <div className="panelHeader termPanelHeader">
               {!panelTerminalCollapsed ? (
                 <div className="termPanelHeaderRow">
@@ -3782,7 +3779,7 @@ export function App() {
                   }}
                   title="设置"
                 >
-                  <i className="fas fa-cog" style={{ marginRight: 6, color: "#8b5cf6" }}></i>设置
+                  <i className="fas fa-cog" style={{ marginRight: 6, color: "#3b82f6" }}></i>设置
                 </button>
                 <button
                   type="button"

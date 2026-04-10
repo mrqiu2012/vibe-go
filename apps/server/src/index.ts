@@ -268,8 +268,11 @@ async function canAutoInstall(tool: SetupInstallTool): Promise<{ ok: true } | { 
       return { ok: true };
     }
     if (process.platform === "win32") {
+      const hasPs = Boolean(await whichBin("powershell"));
       const hasWinget = Boolean(await whichBin("winget"));
-      if (!hasWinget) return { ok: false, reason: "winget not found. Install Claude Code manually." };
+      if (!hasWinget && !hasPs) {
+        return { ok: false, reason: "Missing winget and PowerShell. Install Claude Code manually." };
+      }
       return { ok: true };
     }
     const hasCurl = Boolean(await whichBin("curl"));
@@ -306,7 +309,12 @@ async function runAutoInstall(tool: SetupInstallTool) {
   const timeout = 10 * 60 * 1000;
   const env = {
     ...process.env,
-    PATH: [path.join(process.env.HOME ?? "", ".local", "bin"), process.env.PATH ?? ""].filter(Boolean).join(path.delimiter),
+    PATH: [
+      process.platform === "win32" ? "" : path.join(process.env.HOME ?? "", ".local", "bin"),
+      process.env.PATH ?? "",
+    ]
+      .filter(Boolean)
+      .join(path.delimiter),
   };
 
   if (tool === "agent") {
@@ -346,7 +354,15 @@ async function runAutoInstall(tool: SetupInstallTool) {
       return await execa("brew", ["install", "--cask", "claude-code"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
     }
     if (process.platform === "win32") {
-      return await execa("winget", ["install", "Anthropic.ClaudeCode"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
+      if (await whichBin("winget")) {
+        return await execa("winget", ["install", "Anthropic.ClaudeCode"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
+      }
+      const cmd = "irm https://claude.ai/install.ps1 | iex";
+      return await execa("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], {
+        timeout,
+        maxBuffer: 10 * 1024 * 1024,
+        env,
+      });
     }
     const cmd = "curl -fsSL https://claude.ai/install.sh | bash";
     return await execa("bash", ["-lc", cmd], { timeout, maxBuffer: 10 * 1024 * 1024, env });

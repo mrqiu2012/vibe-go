@@ -16,10 +16,14 @@ export type TermOpenReq = {
   cwd: string; 
   cols?: number; 
   rows?: number;
-  mode?: "restricted" | "native" | "codex" | "claude" | "opencode" | "kimi" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask";
+  mode?: "restricted" | "native" | "codex" | "claude" | "opencode" | "kimi" | "agent" | "plan" | "ask" | "cursor-cli-agent" | "cursor-cli-plan" | "cursor-cli-ask" | "custom";
   options?: {
     prompt?: string;
     resume?: string;
+    customCli?: {
+      command: string;
+      argsText?: string;
+    };
   };
 };
 export type TermOpenResp = OkResp<"term.open", { 

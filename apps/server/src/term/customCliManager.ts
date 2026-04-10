@@ -1,9 +1,8 @@
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendRecording, initSessionRecording } from "./recording.js";
 import { snapshotManager } from "./snapshotManager.js";
-import type { Session, Limits } from "./session.js";
+import type { Session } from "./session.js";
 
 export type TermSend = (msg: any) => void;
 
@@ -21,10 +20,6 @@ export interface CustomCliSession extends Session {
   id: string;
   pty: ReturnType<Pty["spawn"]>;
   cwd: string;
-}
-
-function randomId() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
 async function loadPty(): Promise<Pty> {
@@ -54,20 +49,30 @@ export class CustomCliManager {
   sessions = new Map<string, CustomCliSession>();
   private seq = 0;
   private maxSessions: number;
-  private limits: Limits;
   private validateCwd: (cwd: string) => Promise<string>;
   private send: (msg: any) => void;
 
   constructor(opts: {
     maxSessions: number;
-    limits: Limits;
     validateCwd: (cwd: string) => Promise<string>;
     send: (msg: any) => void;
   }) {
     this.maxSessions = opts.maxSessions;
-    this.limits = opts.limits;
     this.validateCwd = opts.validateCwd;
     this.send = opts.send;
+  }
+
+  private buildShellInvocation(command: string, argsText?: string): { shell: string; input: string } {
+    const trimmedArgs = argsText?.trim();
+    if (process.platform === "win32") {
+      const escapedCommand = command.replace(/'/g, "''");
+      const input = trimmedArgs ? `& '${escapedCommand}' ${trimmedArgs}\r` : `& '${escapedCommand}'\r`;
+      return { shell: "powershell.exe", input };
+    }
+
+    const escapedCommand = command.replace(/'/g, `'\\''`);
+    const input = trimmedArgs ? `'${escapedCommand}' ${trimmedArgs}\r` : `'${escapedCommand}'\r`;
+    return { shell: "bash", input };
   }
 
   async open(
@@ -75,7 +80,7 @@ export class CustomCliManager {
     cols: number,
     rows: number,
     command: string,
-    args: string[] = []
+    argsText?: string,
   ): Promise<CustomCliSession> {
     if (this.sessions.size >= this.maxSessions) {
       throw new Error("Too many sessions");
@@ -85,10 +90,7 @@ export class CustomCliManager {
     const id = `custom-${Date.now()}-${++this.seq}`;
 
     const pty = await loadPty();
-    const shell = process.platform === "win32" ? "powershell.exe" : "bash";
-    
-    // Build the command with args
-    const fullCommand = [command, ...args].join(" ");
+    const { shell, input } = this.buildShellInvocation(command, argsText);
     
     const proc = pty.spawn(shell, [], {
       name: "xterm-color",
@@ -118,7 +120,7 @@ export class CustomCliManager {
     });
 
     // Start the custom CLI immediately
-    proc.write(`${fullCommand}\r`);
+    proc.write(input);
 
     proc.onData((data: string) => {
       appendRecording(stdoutPath, data);
