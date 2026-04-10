@@ -1985,7 +1985,7 @@ export function App() {
             disabled={!activeRoot}
             title="新建文件夹"
           >
-            📁+
+            <i className="fas fa-folder-plus"></i>
           </button>
           <button
             type="button"
@@ -1994,7 +1994,7 @@ export function App() {
             disabled={!activeRoot}
             title="新建文件"
           >
-            📄+
+            <i className="fas fa-file-circle-plus"></i>
           </button>
         </div>
       </div>
@@ -2051,6 +2051,7 @@ export function App() {
                 title="新增项目"
                 disabled={rootPickerLoading}
               >
+                <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
                 {rootPickerLoading ? "新增中…" : "新增项目"}
               </button>
               <button
@@ -2060,7 +2061,7 @@ export function App() {
                 disabled={!activeRoot}
                 title="新建文件夹"
               >
-                📁+
+                <i className="fas fa-folder-plus"></i>
               </button>
               <button
                 type="button"
@@ -2069,7 +2070,7 @@ export function App() {
                 disabled={!activeRoot}
                 title="新建文件"
               >
-                📄+
+                <i className="fas fa-file-circle-plus"></i>
               </button>
             </div>
           </div>
@@ -2110,6 +2111,7 @@ export function App() {
                       onClick={() => void handlePickRoot()}
                       disabled={rootPickerLoading}
                     >
+                      <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
                       {rootPickerLoading ? "新增中…" : "新增项目"}
                     </button>
                   </div>
@@ -2128,7 +2130,7 @@ export function App() {
                 onClick={() => setAiSettingsOpen(true)}
                 title="设置"
               >
-                设置
+                <i className="fas fa-cog" style={{ marginRight: 6 }}></i>设置
               </button>
               <button
                 type="button"
@@ -2137,6 +2139,7 @@ export function App() {
                 title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
                 aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
               >
+                <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ marginRight: 6 }}></i>
                 {isDarkMode ? "浅色" : "深色"}
               </button>
             </div>
@@ -2546,7 +2549,7 @@ export function App() {
               title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
               aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
             >
-              {isDarkMode ? "☀️" : "🌙"}
+              <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"}></i>
             </button>
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
@@ -2911,6 +2914,7 @@ export function App() {
                   onClick={() => void handlePickRoot()}
                   disabled={rootPickerLoading}
                 >
+                  <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
                   {rootPickerLoading ? "新增中…" : "新增项目"}
                 </button>
               </div>
