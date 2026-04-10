@@ -1980,7 +1980,7 @@ export function App() {
         <div className="row" style={{ gap: 6, marginTop: 6 }}>
           <button
             type="button"
-            className="segBtn"
+            className="segBtn segBtnSuccess"
             onClick={createFolder}
             disabled={!activeRoot}
             title="新建文件夹"
@@ -1989,7 +1989,7 @@ export function App() {
           </button>
           <button
             type="button"
-            className="segBtn"
+            className="segBtn segBtnInfo"
             onClick={createFile}
             disabled={!activeRoot}
             title="新建文件"
@@ -2046,7 +2046,7 @@ export function App() {
               {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
               <button
                 type="button"
-                className="btn"
+                className="btn btnPrimary"
                 onClick={() => void handlePickRoot()}
                 title="新增项目"
                 disabled={rootPickerLoading}
@@ -2056,7 +2056,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                className="segBtn"
+                className="segBtn segBtnSuccess"
                 onClick={createFolder}
                 disabled={!activeRoot}
                 title="新建文件夹"
@@ -2065,7 +2065,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                className="segBtn"
+                className="segBtn segBtnInfo"
                 onClick={createFile}
                 disabled={!activeRoot}
                 title="新建文件"
@@ -2107,7 +2107,7 @@ export function App() {
                   <div>
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btnPrimary"
                       onClick={() => void handlePickRoot()}
                       disabled={rootPickerLoading}
                     >
@@ -2126,7 +2126,7 @@ export function App() {
             <div className="panelSettingsRow">
               <button
                 type="button"
-                className="btn panelSettingsBtn"
+                className="btn btnPurple panelSettingsBtn"
                 onClick={() => setAiSettingsOpen(true)}
                 title="设置"
               >
@@ -2134,7 +2134,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                className="themeToggleBtn panelSettingsBtn"
+                className="btn btnWarning panelSettingsBtn"
                 onClick={toggleDarkMode}
                 title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
                 aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
@@ -2544,7 +2544,7 @@ export function App() {
             </span>
             <button
               type="button"
-              className="themeToggleBtn"
+              className="btn btnWarning"
               onClick={toggleDarkMode}
               title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
               aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
@@ -2910,7 +2910,7 @@ export function App() {
                 <span className="rootAddHint">通过系统目录选择器添加目录</span>
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btnPrimary"
                   onClick={() => void handlePickRoot()}
                   disabled={rootPickerLoading}
                 >

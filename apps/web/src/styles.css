@@ -383,6 +383,47 @@ input {
   color: var(--accent2);
 }
 
+/* 彩色 segBtn */
+.segBtnSuccess {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border-radius: 6px;
+}
+
+.segBtnSuccess:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+.segBtnInfo {
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  color: #fff;
+  border-radius: 6px;
+}
+
+.segBtnInfo:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0891b2, #0e7490);
+}
+
+.segBtnWarning {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border-radius: 6px;
+}
+
+.segBtnWarning:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d97706, #b45309);
+}
+
+.segBtnPurple {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: #fff;
+  border-radius: 6px;
+}
+
+.segBtnPurple:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
+
 .codePreview {
   flex: 1;
   min-height: 0;
@@ -570,6 +611,83 @@ input {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 彩色按钮 */
+.btnPrimary {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnPrimary:hover {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: transparent;
+}
+
+.btnSuccess {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnSuccess:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  border-color: transparent;
+}
+
+.btnWarning {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnWarning:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  border-color: transparent;
+}
+
+.btnDanger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnDanger:hover {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  border-color: transparent;
+}
+
+.btnPurple {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnPurple:hover {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  border-color: transparent;
+}
+
+.btnInfo {
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btnInfo:hover {
+  background: linear-gradient(135deg, #0891b2, #0e7490);
+  border-color: transparent;
+}
+
+/* 图标按钮 */
+.btnIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
 }
 
 .select,
