@@ -2046,13 +2046,12 @@ export function App() {
               {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
               <button
                 type="button"
-                className="btn"
+                className="segBtn"
                 onClick={() => void handlePickRoot()}
                 title="新增项目"
                 disabled={rootPickerLoading}
               >
-                <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
-                {rootPickerLoading ? "新增中…" : "新增项目"}
+                <i className="fas fa-plus" style={{ color: "#3b82f6" }}></i>
               </button>
               <button
                 type="button"
@@ -2107,12 +2106,11 @@ export function App() {
                   <div>
                     <button
                       type="button"
-                      className="btn"
+                      className="segBtn"
                       onClick={() => void handlePickRoot()}
                       disabled={rootPickerLoading}
                     >
-                      <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
-                      {rootPickerLoading ? "新增中…" : "新增项目"}
+                      <i className="fas fa-plus" style={{ color: "#3b82f6" }}></i>
                     </button>
                   </div>
                 </div>
@@ -2910,12 +2908,11 @@ export function App() {
                 <span className="rootAddHint">通过系统目录选择器添加目录</span>
                 <button
                   type="button"
-                  className="btn"
+                  className="segBtn"
                   onClick={() => void handlePickRoot()}
                   disabled={rootPickerLoading}
                 >
-                  <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
-                  {rootPickerLoading ? "新增中…" : "新增项目"}
+                  <i className="fas fa-plus" style={{ color: "#3b82f6" }}></i>
                 </button>
               </div>
             </div>
