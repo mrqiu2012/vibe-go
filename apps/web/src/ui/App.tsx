@@ -1980,21 +1980,21 @@ export function App() {
         <div className="row" style={{ gap: 6, marginTop: 6 }}>
           <button
             type="button"
-            className="segBtn segBtnSuccess"
+            className="segBtn"
             onClick={createFolder}
             disabled={!activeRoot}
             title="新建文件夹"
           >
-            <i className="fas fa-folder-plus"></i>
+            <i className="fas fa-folder-plus" style={{ color: "#10b981" }}></i>
           </button>
           <button
             type="button"
-            className="segBtn segBtnInfo"
+            className="segBtn"
             onClick={createFile}
             disabled={!activeRoot}
             title="新建文件"
           >
-            <i className="fas fa-file-circle-plus"></i>
+            <i className="fas fa-file-circle-plus" style={{ color: "#06b6d4" }}></i>
           </button>
         </div>
       </div>
@@ -2046,31 +2046,31 @@ export function App() {
               {roots.length === 0 ? <span className="fileMeta">未添加文件目录</span> : null}
               <button
                 type="button"
-                className="btn btnPrimary"
+                className="btn"
                 onClick={() => void handlePickRoot()}
                 title="新增项目"
                 disabled={rootPickerLoading}
               >
-                <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
+                <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
                 {rootPickerLoading ? "新增中…" : "新增项目"}
               </button>
               <button
                 type="button"
-                className="segBtn segBtnSuccess"
+                className="segBtn"
                 onClick={createFolder}
                 disabled={!activeRoot}
                 title="新建文件夹"
               >
-                <i className="fas fa-folder-plus"></i>
+                <i className="fas fa-folder-plus" style={{ color: "#10b981" }}></i>
               </button>
               <button
                 type="button"
-                className="segBtn segBtnInfo"
+                className="segBtn"
                 onClick={createFile}
                 disabled={!activeRoot}
                 title="新建文件"
               >
-                <i className="fas fa-file-circle-plus"></i>
+                <i className="fas fa-file-circle-plus" style={{ color: "#06b6d4" }}></i>
               </button>
             </div>
           </div>
@@ -2107,11 +2107,11 @@ export function App() {
                   <div>
                     <button
                       type="button"
-                      className="btn btnPrimary"
+                      className="btn"
                       onClick={() => void handlePickRoot()}
                       disabled={rootPickerLoading}
                     >
-                      <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
+                      <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
                       {rootPickerLoading ? "新增中…" : "新增项目"}
                     </button>
                   </div>
@@ -2126,20 +2126,20 @@ export function App() {
             <div className="panelSettingsRow">
               <button
                 type="button"
-                className="btn btnPurple panelSettingsBtn"
+                className="btn panelSettingsBtn"
                 onClick={() => setAiSettingsOpen(true)}
                 title="设置"
               >
-                <i className="fas fa-cog" style={{ marginRight: 6 }}></i>设置
+                <i className="fas fa-cog" style={{ marginRight: 6, color: "#8b5cf6" }}></i>设置
               </button>
               <button
                 type="button"
-                className="btn btnWarning panelSettingsBtn"
+                className="btn panelSettingsBtn"
                 onClick={toggleDarkMode}
                 title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
                 aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
               >
-                <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ marginRight: 6 }}></i>
+                <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ marginRight: 6, color: isDarkMode ? "#f59e0b" : "#64748b" }}></i>
                 {isDarkMode ? "浅色" : "深色"}
               </button>
             </div>
@@ -2544,12 +2544,12 @@ export function App() {
             </span>
             <button
               type="button"
-              className="btn btnWarning"
+              className="btn"
               onClick={toggleDarkMode}
               title={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
               aria-label={isDarkMode ? "切换到浅色模式" : "切换到深色模式"}
             >
-              <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"}></i>
+              <i className={isDarkMode ? "fas fa-sun" : "fas fa-moon"} style={{ color: isDarkMode ? "#f59e0b" : "#64748b" }}></i>
             </button>
             <div className="tabs">
               <button className={"tabBtn" + (mobileTab === "explorer" ? " tabBtnActive" : "")} onClick={() => setMobileTab("explorer")}>
@@ -2910,11 +2910,11 @@ export function App() {
                 <span className="rootAddHint">通过系统目录选择器添加目录</span>
                 <button
                   type="button"
-                  className="btn btnPrimary"
+                  className="btn"
                   onClick={() => void handlePickRoot()}
                   disabled={rootPickerLoading}
                 >
-                  <i className="fas fa-plus" style={{ marginRight: 6 }}></i>
+                  <i className="fas fa-plus" style={{ marginRight: 6, color: "#3b82f6" }}></i>
                   {rootPickerLoading ? "新增中…" : "新增项目"}
                 </button>
               </div>
