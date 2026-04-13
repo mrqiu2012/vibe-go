@@ -109,25 +109,30 @@ function buildStreamHandler(
 
 type ModelOption = { id: string; label: string };
 
-/** 固定模型列表，不请求 Cursor CLI；与 Cursor 官方文档 Models 页保持一致。超过 24 小时可复查 docs.cursor.com 更新。 */
+/** 与 `cursor agent models` 输出的 model id 一致；本地可运行该命令核对。 */
 const CURSOR_MODELS: ModelOption[] = [
   { id: "auto", label: "Auto（当前）" },
-  // 官方文档顺序（docs.cursor.com get-started/models）
-  { id: "sonnet-4.5", label: "Claude 4.5 Sonnet" },
-  { id: "opus-4.6", label: "Claude 4.6 Opus" },
+  { id: "composer-2-fast", label: "Composer 2 Fast（CLI 默认）" },
+  { id: "composer-2", label: "Composer 2" },
   { id: "composer-1.5", label: "Composer 1.5" },
+  { id: "claude-4.5-sonnet", label: "Claude 4.5 Sonnet" },
+  { id: "claude-4.6-opus-high", label: "Claude 4.6 Opus" },
+  { id: "claude-4.6-sonnet-medium", label: "Claude 4.6 Sonnet" },
   { id: "gemini-3-flash", label: "Gemini 3 Flash" },
-  { id: "gemini-3-pro", label: "Gemini 3 Pro" },
+  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+  { id: "gpt-5.4-medium", label: "GPT-5.4（1M）" },
+  { id: "gpt-5.4-medium-fast", label: "GPT-5.4 Fast" },
+  { id: "gpt-5.4-high", label: "GPT-5.4 1M High" },
+  { id: "gpt-5.4-xhigh", label: "GPT-5.4 1M Extra High" },
+  { id: "gpt-5.4-low", label: "GPT-5.4 1M Low" },
   { id: "gpt-5.2", label: "GPT-5.2" },
   { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { id: "grok-code", label: "Grok Code" },
-  // Claude
-  { id: "opus-4.5-thinking", label: "Claude 4.5 Opus (Thinking)（默认）" },
-  { id: "opus-4.5", label: "Claude 4.5 Opus" },
-  { id: "sonnet-4.5-thinking", label: "Claude 4.5 Sonnet (Thinking)" },
-  // Composer
-  { id: "composer-1", label: "Composer 1" },
-  // GPT-5.2 / Codex
+  { id: "gpt-5.3-codex-high", label: "GPT-5.3 Codex High" },
+  { id: "gpt-5.3-codex-fast", label: "GPT-5.3 Codex Fast" },
+  { id: "grok-4-20", label: "Grok 4.20" },
+  { id: "claude-4.5-opus-high-thinking", label: "Claude 4.5 Opus (Thinking)" },
+  { id: "claude-4.5-opus-high", label: "Claude 4.5 Opus" },
+  { id: "claude-4.5-sonnet-thinking", label: "Claude 4.5 Sonnet (Thinking)" },
   { id: "gpt-5.2-high", label: "GPT-5.2 High" },
   { id: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
   { id: "gpt-5.2-codex-high", label: "GPT-5.2 Codex High" },
@@ -137,12 +142,31 @@ const CURSOR_MODELS: ModelOption[] = [
   { id: "gpt-5.2-codex-high-fast", label: "GPT-5.2 Codex High Fast" },
   { id: "gpt-5.2-codex-low-fast", label: "GPT-5.2 Codex Low Fast" },
   { id: "gpt-5.2-codex-xhigh-fast", label: "GPT-5.2 Codex Extra High Fast" },
-  { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
+  { id: "gpt-5.1-codex-max-medium", label: "GPT-5.1 Codex Max" },
   { id: "gpt-5.1-codex-max-high", label: "GPT-5.1 Codex Max High" },
   { id: "gpt-5.1-high", label: "GPT-5.1 High" },
-  // 其他
-  { id: "grok", label: "Grok" },
 ];
+
+
+
+/** 旧版 UI / 短 id → 当前 CLI id（`cursor agent` 已不再接受左侧值）。 */
+const LEGACY_AGENT_MODEL_ID: Record<string, string> = {
+  "sonnet-4.5": "claude-4.5-sonnet",
+  "opus-4.6": "claude-4.6-opus-high",
+  "gemini-3-pro": "gemini-3.1-pro",
+  "grok-code": "grok-4-20",
+  "opus-4.5-thinking": "claude-4.5-opus-high-thinking",
+  "opus-4.5": "claude-4.5-opus-high",
+  "sonnet-4.5-thinking": "claude-4.5-sonnet-thinking",
+  "composer-1": "composer-2",
+  "gpt-5.1-codex-max": "gpt-5.1-codex-max-medium",
+  "grok": "grok-4-20",
+};
+
+function resolveAgentModelId(raw: string): string {
+  const id = raw?.trim() || "auto";
+  return LEGACY_AGENT_MODEL_ID[id] ?? id;
+}
 
 async function fetchSessions(cwd: string): Promise<ChatSession[]> {
   try {
@@ -272,6 +296,35 @@ export function CursorChatPanel({
   const [chatId, setChatId] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("auto");
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(CURSOR_MODELS);
+  const [updatingModels, setUpdatingModels] = useState(false);
+  useEffect(() => {
+    setSelectedModel((prev) => resolveAgentModelId(prev));
+  }, []);
+
+  // 从后端获取最新模型列表
+  const fetchLatestModels = async () => {
+    setUpdatingModels(true);
+    try {
+      const res = await fetch(apiUrl("/api/cursor-agent/models"));
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
+        // 将后端返回的模型转换为 ModelOption 格式
+        const newModels: ModelOption[] = [
+          { id: "auto", label: "Auto（当前）" },
+          ...data.models.map((m: { id: string; name?: string }) => ({
+            id: m.id,
+            label: m.name || m.id,
+          })),
+        ];
+        setAvailableModels(newModels);
+      }
+    } catch {
+      // 如果获取失败，保持当前列表
+    } finally {
+      setUpdatingModels(false);
+    }
+  };
   const [headerPortalReady, setHeaderPortalReady] = useState(false);
   const [pendingQuestions, setPendingQuestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -569,7 +622,7 @@ export function CursorChatPanel({
             cwd,
             force: true,
             resume,
-            model: selectedModel || "auto",
+            model: resolveAgentModelId(selectedModel || "auto"),
           }),
           signal: ac.signal,
         });
@@ -797,12 +850,20 @@ export function CursorChatPanel({
         onChange={(e) => setSelectedModel(e.target.value)}
         title="切换模型"
       >
-        {CURSOR_MODELS.map((m) => (
+        {availableModels.map((m) => (
           <option key={m.id} value={m.id}>
             {m.label}
           </option>
         ))}
       </select>
+      <button
+        className="updateModelsBtn"
+        onClick={fetchLatestModels}
+        disabled={updatingModels}
+        title="更新模型列表"
+      >
+        {updatingModels ? "更新中..." : "更新模型"}
+      </button>
       <button className="newChatBtn" onClick={handleNewChat} disabled={loading} title="为此文件夹开始新对话">
         新建
       </button>

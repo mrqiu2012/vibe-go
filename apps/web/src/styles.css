@@ -1703,6 +1703,30 @@ input {
   cursor: not-allowed;
 }
 
+.updateModelsBtn {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+  white-space: nowrap;
+}
+
+.updateModelsBtn:hover:not(:disabled) {
+  background: var(--panel2);
+  border-color: #cbd5e1;
+  color: var(--text);
+}
+
+.updateModelsBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
