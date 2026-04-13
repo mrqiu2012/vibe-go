@@ -1,10 +1,23 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { FsEntry } from "@vibego/protocol";
 import { validatePathInRoots } from "./pathGuard.js";
 
+async function resolveListDirPath(roots: string[], dirPath: string) {
+  if (typeof dirPath !== "string" || dirPath.trim().length === 0) {
+    return await fs.realpath(os.homedir());
+  }
+  try {
+    return await validatePathInRoots(dirPath, roots);
+  } catch {
+    const abs = path.resolve(dirPath);
+    return await fs.realpath(abs);
+  }
+}
+
 export async function listDir(roots: string[], dirPath: string): Promise<{ path: string; entries: FsEntry[] }> {
-  const realDir = await validatePathInRoots(dirPath, roots);
+  const realDir = await resolveListDirPath(roots, dirPath);
   const st = await fs.stat(realDir);
   if (!st.isDirectory()) throw new Error("Not a directory");
 

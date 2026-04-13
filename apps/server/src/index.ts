@@ -54,7 +54,7 @@ function isLoopbackReq(req: Request) {
   );
 }
 
-/** 是否为本机请求（含 loopback 或本机 LAN IP），用于选择根目录等需在本机弹窗的接口 */
+/** 是否为本机请求（含 loopback 或本机 LAN IP），用于需限制本机访问的接口（如 install、add-root） */
 function isLocalReq(req: Request): boolean {
   if (isLoopbackReq(req)) return true;
   const ra = (req.socket.remoteAddress || "").replace(/^::ffff:/i, "");
@@ -393,35 +393,6 @@ async function runAutoInstall(tool: SetupInstallTool) {
   return await execa("npm", ["i", "-g", "@openai/codex"], { timeout, maxBuffer: 10 * 1024 * 1024, env });
 }
 
-async function chooseDirectoryNative(promptText: string) {
-  if (process.platform === "darwin") {
-    // Returns POSIX path with trailing slash. Exit code 1 on cancel.
-    const script = `POSIX path of (choose folder with prompt "${promptText.replace(/"/g, '\\"')}")`;
-    const r = await execa("osascript", ["-e", script], { timeout: 300000 });
-    const out = String(r.stdout || "").trim();
-    return out;
-  }
-  if (process.platform === "win32") {
-    const ps = [
-      "Add-Type -AssemblyName System.Windows.Forms;",
-      "$d = New-Object System.Windows.Forms.FolderBrowserDialog;",
-      `$d.Description = "${promptText.replace(/"/g, '""')}";`,
-      "$r = $d.ShowDialog();",
-      "if ($r -ne [System.Windows.Forms.DialogResult]::OK) { exit 1 }",
-      "Write-Output $d.SelectedPath;",
-    ].join(" ");
-    // -Sta: Single Thread Apartment required for System.Windows.Forms dialog to show
-    const r = await execa("powershell", ["-Sta", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], {
-      timeout: 300000,
-      windowsHide: false,
-    });
-    return String(r.stdout || "").trim();
-  }
-  // linux: best-effort (requires zenity)
-  const r = await execa("zenity", ["--file-selection", "--directory", "--title", promptText], { timeout: 300000 });
-  return String(r.stdout || "").trim();
-}
-
 async function persistRootSelection(
   rootRaw: string,
   setActive: boolean,
@@ -748,21 +719,16 @@ async function main() {
   });
 
   app.post("/api/setup/pick-root", async (req, res) => {
-    if (!isLocalReq(req)) return res.status(403).json({ ok: false, error: "仅允许本机访问" });
     const setActive = Boolean((req.body as any)?.setActive ?? true);
-    const promptText = String((req.body as any)?.prompt ?? "请选择允许 VibeGo 访问的目录");
+    const pickedFromBody = String((req.body as any)?.path ?? "").trim();
+    if (!pickedFromBody) {
+      return res.status(400).json({ ok: false, error: "缺少路径参数（请在前端用 /api/list 浏览并提交目录路径）" });
+    }
     try {
-      const picked = await chooseDirectoryNative(promptText);
-      if (!picked) {
-        return res.status(400).json({ ok: false, error: "未选择目录" });
-      }
-      const result = await persistRootSelection(picked, setActive, rootsPath, configPath, setupDonePath);
+      const result = await persistRootSelection(pickedFromBody, setActive, rootsPath, configPath, setupDonePath);
       roots = result.roots;
-      res.json({ ok: true, picked, ...result });
+      res.json({ ok: true, picked: pickedFromBody, ...result });
     } catch (e: any) {
-      if (e?.exitCode === 1 || e?.code === 1) {
-        return res.status(400).json({ ok: false, error: "已取消选择目录" });
-      }
       res.status(500).json({ ok: false, error: e?.message ?? String(e) });
     }
   });

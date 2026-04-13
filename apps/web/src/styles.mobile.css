@@ -134,6 +134,61 @@
     padding: 0;
   }
 
+  .appMobile .rootPickerModal {
+    width: 100%;
+    max-height: calc(100vh - 32px);
+    padding: 18px 16px;
+    border-radius: 16px;
+  }
+
+  .appMobile .rootPickerToolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .appMobile .rootPickerToolbarBtn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .appMobile .rootPickerPathInput {
+    order: 3;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .appMobile .rootPickerJumpBtn {
+    min-width: 72px;
+  }
+
+  .appMobile .rootPickerCurrentPath {
+    padding: 10px 12px;
+  }
+
+  .appMobile .rootPickerList {
+    max-height: 44vh;
+    padding: 6px;
+  }
+
+  .appMobile .rootPickerEntry {
+    padding: 11px 12px;
+    gap: 10px;
+  }
+
+  .appMobile .rootPickerEntryIcon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .appMobile .rootPickerEntryTitle {
+    font-size: 13px;
+  }
+
+  .appMobile .rootPickerEntryPath {
+    font-size: 11px;
+  }
+
   /* ============================================
      4. 文件浏览器优化
      ============================================ */

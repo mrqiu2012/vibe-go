@@ -1,12 +1,20 @@
 /** API base resolution:
- * - If VITE_API_BASE is set, use it.
+ * - If VITE_API_BASE or VITE_FS_LIST_BASE is set, use it (后者可与「完整 list URL」同配，见 normalizeApiOrigin)。
  * - In dev, default to same host with backend port 3990 (works for LAN/Tailscale).
  * - If already on backend port, use same origin.
  * - In production, prefer same-origin unless overridden.
  */
+function normalizeApiOrigin(raw: string): string {
+  let s = raw.trim().replace(/\/$/, "");
+  if (s.endsWith("/api/list")) s = s.slice(0, -"/api/list".length).replace(/\/$/, "");
+  return s;
+}
+
 function resolveApiBase(): string {
-  const envBase = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_API_BASE as string | undefined) : undefined;
-  if (envBase && envBase.trim()) return envBase.trim().replace(/\/$/, "");
+  const envApi = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_API_BASE as string | undefined) : undefined;
+  const envList = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_FS_LIST_BASE as string | undefined) : undefined;
+  const envBase = (envApi && envApi.trim()) || (envList && envList.trim());
+  if (envBase) return normalizeApiOrigin(envBase);
 
   if (typeof window === "undefined") return "";
   const loc = window.location;
@@ -82,22 +90,13 @@ export async function apiSetActiveRoot(root: string) {
   );
 }
 
-export async function apiAddRoot(root: string, setActive = true) {
-  return j<{ ok: true; roots: string[]; activeRoot: string }>(
-    await fetch(apiUrl("/api/setup/add-root"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ root, setActive }),
-    })
-  );
-}
-
-export async function apiPickRoot(setActive = true, prompt = "请选择允许 VibeGo 访问的目录") {
+/** 与 /api/list 目录选择器配套：提交已选目录路径（服务端不再使用原生对话框） */
+export async function apiPickRoot(path: string, setActive = true) {
   return j<{ ok: true; roots: string[]; activeRoot: string; picked: string }>(
     await fetch(apiUrl("/api/setup/pick-root"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ setActive, prompt }),
+      body: JSON.stringify({ setActive, path }),
     })
   );
 }

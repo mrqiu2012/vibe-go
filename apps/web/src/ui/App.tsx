@@ -56,14 +56,23 @@ type TreeNode = {
 };
 
 function baseName(p: string) {
-  const clean = p.replace(/\/+$/, "");
-  const parts = clean.split("/");
+  const clean = p.replace(/[\\/]+$/, "");
+  const parts = clean.split(/[\\/]/);
   return parts[parts.length - 1] || clean;
 }
 
 function joinPath(parent: string, name: string) {
-  if (parent.endsWith("/")) return parent + name;
-  return parent + "/" + name;
+  if (parent.endsWith("/") || parent.endsWith("\\")) return parent + name;
+  return parent + (parent.includes("\\") && !parent.includes("/") ? "\\" : "/") + name;
+}
+
+function parentDirPath(p: string) {
+  const clean = p.replace(/[\\/]+$/, "");
+  if (!clean) return p.includes("\\") ? p : "/";
+  if (/^[A-Za-z]:$/.test(clean)) return `${clean}\\`;
+  const idx = Math.max(clean.lastIndexOf("/"), clean.lastIndexOf("\\"));
+  if (idx <= 0) return clean.includes("\\") ? clean : "/";
+  return clean.slice(0, idx);
 }
 
 function bytes(n: number) {
@@ -1195,6 +1204,11 @@ export function App() {
   const [createModalName, setCreateModalName] = useState("");
   const [createModalParent, setCreateModalParent] = useState("");
   const createModalInputRef = useRef<HTMLInputElement | null>(null);
+  const [rootPickerModalOpen, setRootPickerModalOpen] = useState(false);
+  const [rootPickerPath, setRootPickerPath] = useState("");
+  const [rootPickerInputPath, setRootPickerInputPath] = useState("");
+  const [rootPickerEntries, setRootPickerEntries] = useState<FsEntry[]>([]);
+  const rootPickerInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileKeysVisible, setMobileKeysVisible] = useState(false);
   const mobileKeysTouchedRef = useRef(false);
   const termMobileControlsRef = useRef<HTMLDivElement | null>(null);
@@ -1264,17 +1278,49 @@ export function App() {
     setExplorerUserPath(root);
   }, []);
 
-  const handlePickRoot = useCallback(async () => {
+  const loadRootPickerDir = useCallback(async (dirPath: string) => {
     if (rootPickerLoading) return;
     setRootPickerLoading(true);
     try {
-      const res = await apiPickRoot(true);
+      const res = await apiList(dirPath);
+      setRootPickerPath(res.path);
+      setRootPickerInputPath(res.path);
+      setRootPickerEntries(res.entries.filter((entry) => entry.type === "dir"));
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      setStatus(`[错误] 读取目录: ${msg}`);
+    } finally {
+      setRootPickerLoading(false);
+    }
+  }, [rootPickerLoading]);
+
+  const handlePickRoot = useCallback(() => {
+    if (rootPickerLoading) return;
+    setRootPickerModalOpen(true);
+    setRootPickerPath("");
+    setRootPickerInputPath("");
+    setRootPickerEntries([]);
+    window.setTimeout(() => rootPickerInputRef.current?.focus(), 80);
+    void loadRootPickerDir("");
+  }, [loadRootPickerDir, rootPickerLoading]);
+
+  const handlePickRootConfirm = useCallback(async () => {
+    const pickedPath = rootPickerInputPath.trim() || rootPickerPath.trim();
+    if (!pickedPath) {
+      setStatus("[错误] 请先选择目录");
+      return;
+    }
+    if (rootPickerLoading) return;
+    setRootPickerLoading(true);
+    try {
+      const res = await apiPickRoot(pickedPath);
       setRoots(res.roots);
       activateRoot(res.activeRoot);
       setStatus(`已添加目录：${res.picked}`);
+      setRootPickerModalOpen(false);
     } catch (e: any) {
       const msg = e?.message ?? String(e);
-      if (msg === "已取消选择目录" || msg === "未选择目录") return;
+      if (msg === "未选择目录") return;
       setStatus(`[错误] 选择目录: ${msg}`);
     } finally {
       setRootPickerLoading(false);
@@ -2266,6 +2312,11 @@ export function App() {
     isMobile,
     refreshDirectoryInTree,
   ]);
+
+  const handleRootPickerJump = useCallback(() => {
+    const nextPath = rootPickerInputPath.trim();
+    void loadRootPickerDir(nextPath);
+  }, [loadRootPickerDir, rootPickerInputPath]);
 
   // Ctrl+S / Cmd+S
   useEffect(() => {
@@ -3840,6 +3891,123 @@ export function App() {
                 }}
               >
                 确定
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {rootPickerModalOpen ? (
+        <div
+          className="pasteModalOverlay"
+          onClick={() => setRootPickerModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rootPickerModalTitle"
+        >
+          <div
+            className="pasteModalBox rootPickerModal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="rootPickerModalTitle" className="pasteModalTitle">选择项目目录</h3>
+            <p className="fileMeta rootPickerIntro">
+              浏览服务器上的系统目录，选中后会加入左侧项目列表。
+            </p>
+            <div className="rootPickerToolbar">
+              <button
+                type="button"
+                className="segBtn rootPickerToolbarBtn"
+                onClick={() => void loadRootPickerDir(parentDirPath(rootPickerPath))}
+                disabled={rootPickerLoading || !rootPickerPath || parentDirPath(rootPickerPath) === rootPickerPath}
+                title="返回上级目录"
+              >
+                <i className="fas fa-arrow-up"></i>
+              </button>
+              <button
+                type="button"
+                className="segBtn rootPickerToolbarBtn"
+                onClick={() => void loadRootPickerDir(rootPickerPath)}
+                disabled={rootPickerLoading}
+                title="刷新当前目录"
+              >
+                <i className="fas fa-rotate-right"></i>
+              </button>
+              <input
+                ref={rootPickerInputRef}
+                type="text"
+                className="rootPickerPathInput"
+                placeholder="输入目录路径，例如 /home 或 /workspace/project"
+                value={rootPickerInputPath}
+                onChange={(e) => setRootPickerInputPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleRootPickerJump();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn rootPickerJumpBtn"
+                onClick={handleRootPickerJump}
+                disabled={rootPickerLoading}
+              >
+                跳转
+              </button>
+            </div>
+            <div className="rootPickerCurrentPath" aria-live="polite">
+              <span className="rootPickerCurrentLabel">当前目录</span>
+              <span className="rootPickerCurrentValue">{rootPickerPath || "(加载中…)"}</span>
+            </div>
+            <div className="rootPickerList">
+              {rootPickerLoading ? (
+                <div className="fileMeta rootPickerListState">加载中…</div>
+              ) : rootPickerEntries.length > 0 ? (
+                rootPickerEntries.map((entry) => {
+                  const nextPath = rootPickerPath ? joinPath(rootPickerPath, entry.name) : entry.name;
+                  return (
+                    <button
+                      key={nextPath}
+                      type="button"
+                      className="rootPickerEntry"
+                      onClick={() => void loadRootPickerDir(nextPath)}
+                      title={nextPath}
+                    >
+                      <span className="rootPickerEntryIcon" aria-hidden="true">
+                        <i className="fas fa-folder"></i>
+                      </span>
+                      <span className="rootPickerEntryContent">
+                        <span className="rootPickerEntryTitle">{entry.name}</span>
+                        <span className="rootPickerEntryPath">{nextPath}</span>
+                      </span>
+                      <span className="rootPickerEntryChevron" aria-hidden="true">
+                        <i className="fas fa-chevron-right"></i>
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="fileMeta rootPickerListState">当前目录下没有可进入的子目录</div>
+              )}
+            </div>
+            <div className="pasteModalActions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setRootPickerModalOpen(false)}
+                disabled={rootPickerLoading}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btnPrimary"
+                onClick={() => {
+                  void handlePickRootConfirm();
+                }}
+                disabled={rootPickerLoading || (!rootPickerInputPath.trim() && !rootPickerPath)}
+              >
+                选择当前目录
               </button>
             </div>
           </div>
